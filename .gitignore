@@ -1,5 +1,5 @@
 # Rust / Soroban
-/target
+target/
 **/*.rs.bk
 
 
@@ -9,9 +9,7 @@ node_modules
 *.log
 
 # Local env files (never commit secrets)
-.env
-.env.local
-.env*.local
+.env*
 
 # OS / editor
 .DS_Store
@@ -34,4 +32,6 @@ CLAUDE.md
 .eslintcache
 coverage/
 .yarn/
+.firebase/
+.vercel/
 
