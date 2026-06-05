@@ -1,0 +1,37 @@
+# Rust / Soroban
+/target
+**/*.rs.bk
+
+
+# Node / Next.js (the web/ app keeps its own .gitignore too)
+node_modules
+.next
+*.log
+
+# Local env files (never commit secrets)
+.env
+.env.local
+.env*.local
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea
+.vscode/*
+!.vscode/extensions.json
+.agents
+test_snapshots
+CLAUDE.md
+
+# Stellar keys, seeds, and credentials
+*.pem
+*.key
+*.seed
+.stellar/
+.soroban/
+
+# Frontend caches and coverage outputs
+.eslintcache
+coverage/
+.yarn/
+
