@@ -3,7 +3,9 @@
 import { useState, useEffect, useCallback } from 'react';
 import dynamic from 'next/dynamic';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { useWallet } from '@/hooks/useWallet';
+import { useAuth } from '@/context/AuthContext';
 import { fetchBalances, Balances } from '@/lib/balances';
 import { fundTestnetAccount } from '@/lib/stellar';
 import { 
@@ -31,8 +33,10 @@ const Map = dynamic(() => import('@/components/Map'), {
 });
 
 export default function MerchantPage() {
+  const router = useRouter();
   const wallet = useWallet();
   const { publicKey, connect, connecting } = wallet;
+  const { user, profile, loading: authLoading, logOut, linkWalletAddress } = useAuth();
 
   // Store registration form state
   const [storeName, setStoreName] = useState('');
@@ -53,6 +57,13 @@ export default function MerchantPage() {
   // Wallet balances
   const [balances, setBalances] = useState<Balances | null>(null);
   const [funding, setFunding] = useState(false);
+
+  // Route guarding redirect
+  useEffect(() => {
+    if (!authLoading && !user) {
+      router.push('/auth');
+    }
+  }, [user, authLoading, router]);
 
   // Load registered stores from contract
   const loadRegistry = useCallback(async () => {
@@ -197,6 +208,49 @@ export default function MerchantPage() {
     }
   };
 
+  // Show loading indicator during session verification
+  if (authLoading || !user) {
+    return (
+      <div className="min-h-screen w-full flex flex-col items-center justify-center gap-3 bg-[#070a0e] text-gray-400">
+        <Loader2 className="w-10 h-10 animate-spin text-[#ff7a00]" />
+        <p className="text-sm">Verifying merchant session...</p>
+      </div>
+    );
+  }
+
+  // Deny access if profile is not a merchant
+  if (profile && profile.role !== 'merchant') {
+    return (
+      <div className="min-h-screen w-full flex items-center justify-center p-4 bg-[#070a0e]">
+        <div className="max-w-md w-full glass rounded-3xl p-8 border border-red-500/20 text-center flex flex-col items-center gap-6">
+          <div className="w-16 h-16 rounded-full bg-red-500/10 border border-red-500/20 flex items-center justify-center text-red-400">
+            <AlertCircle className="w-8 h-8" />
+          </div>
+          <div>
+            <h2 className="text-lg font-bold text-white">Access Denied</h2>
+            <p className="text-xs text-gray-400 mt-2 leading-relaxed">
+              Your account is registered as a Customer. The Merchant POS Portal is reserved for store owners.
+            </p>
+          </div>
+          <div className="flex gap-4 w-full">
+            <button
+              onClick={() => router.push('/customer')}
+              className="flex-1 bg-white/5 hover:bg-white/10 text-white font-bold py-2.5 px-4 rounded-xl border border-white/10 text-xs transition"
+            >
+              Go to Customer Portal
+            </button>
+            <button
+              onClick={logOut}
+              className="flex-1 bg-red-500 hover:bg-red-600 text-white font-bold py-2.5 px-4 rounded-xl text-xs transition"
+            >
+              Sign Out
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <main className="min-h-screen w-full py-8 px-4 sm:px-6">
       <div className="mx-auto max-w-6xl flex flex-col gap-6">
@@ -223,7 +277,24 @@ export default function MerchantPage() {
               </p>
             </div>
           </div>
-          <ConnectWallet {...wallet} />
+
+          <div className="flex items-center gap-4 w-full sm:w-auto justify-between sm:justify-start">
+            <div className="text-left sm:text-right">
+              <p className="text-xs font-semibold text-white">{profile?.email}</p>
+              <p className="text-[10px] text-gray-500 uppercase tracking-wider font-bold">Merchant Account</p>
+            </div>
+            <div className="flex items-center gap-2">
+              <ConnectWallet {...wallet} />
+              <button 
+                onClick={logOut} 
+                className="p-2 bg-red-500/10 hover:bg-red-500/20 rounded-xl border border-red-500/20 text-red-400 hover:text-red-300 transition text-xs font-bold flex items-center gap-1.5"
+                title="Log Out"
+              >
+                <LogOut className="w-4 h-4" />
+                <span className="hidden md:inline">Sign Out</span>
+              </button>
+            </div>
+          </div>
         </header>
 
         {/* Action Error alerts */}
@@ -233,6 +304,51 @@ export default function MerchantPage() {
             <div>
               <span className="font-bold">Error:</span> {actionError}
             </div>
+          </div>
+        )}
+
+        {/* Wallet Linking / Mismatch Prompts */}
+        {publicKey && !profile?.linkedWallet && (
+          <div className="bg-[#ff7a00]/10 border border-[#ff7a00]/25 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div className="flex gap-2.5 items-start">
+              <Wallet className="w-5 h-5 text-[#ff7a00] shrink-0 mt-0.5" />
+              <div>
+                <h4 className="text-sm font-bold text-white">Link Your Wallet</h4>
+                <p className="text-xs text-gray-400 mt-0.5 leading-relaxed">
+                  Link your connected wallet <span className="font-mono text-[#ffc700]">{publicKey.slice(0, 6)}...{publicKey.slice(-6)}</span> to your merchant account to sync your products and sales receipts to the cloud.
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={() => linkWalletAddress(publicKey)}
+              className="bg-[#ff7a00] hover:bg-[#e06b00] text-white text-xs font-bold py-2 px-4 rounded-xl shrink-0 transition"
+            >
+              Link Connected Wallet
+            </button>
+          </div>
+        )}
+
+        {publicKey && profile?.linkedWallet && publicKey !== profile.linkedWallet && (
+          <div className="bg-[#ffc700]/10 border border-[#ffc700]/25 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div className="flex gap-2.5 items-start">
+              <AlertCircle className="w-5 h-5 text-[#ffc700] shrink-0 mt-0.5" />
+              <div>
+                <h4 className="text-sm font-bold text-white">Wallet Address Mismatch</h4>
+                <p className="text-xs text-gray-400 mt-0.5 leading-relaxed">
+                  Your connected wallet (<span className="font-mono text-[#ffc700]">{publicKey.slice(0, 6)}...{publicKey.slice(-6)}</span>) is different from your linked merchant wallet (<span className="font-mono text-white">{profile.linkedWallet.slice(0, 6)}...{profile.linkedWallet.slice(-6)}</span>).
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={() => {
+                if (confirm("Are you sure you want to update your linked wallet? This will associate new products and sales with this wallet.")) {
+                  linkWalletAddress(publicKey);
+                }
+              }}
+              className="bg-[#ffc700] hover:bg-[#e0b000] text-[#070a0e] text-xs font-bold py-2 px-4 rounded-xl shrink-0 transition"
+            >
+              Update Linked Wallet
+            </button>
           </div>
         )}
 

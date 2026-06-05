@@ -5,9 +5,23 @@ import { QRCodeSVG } from 'qrcode.react';
 import { Horizon } from '@stellar/stellar-sdk';
 import { HORIZON_URL } from '@/lib/stellar';
 import QRScanner from './QRScanner';
+import { useAuth } from '@/context/AuthContext';
+import { db } from '@/lib/firebase';
+import { 
+  collection, 
+  query, 
+  where, 
+  onSnapshot, 
+  doc, 
+  setDoc, 
+  deleteDoc, 
+  addDoc, 
+  orderBy,
+  getDocs
+} from 'firebase/firestore';
 import { 
   Plus, Trash2, ShoppingCart, Tag, History, CheckCircle2, 
-  ArrowRight, X, Printer, Package, ChevronRight, AlertCircle, RefreshCw
+  ArrowRight, X, Printer, Package, ChevronRight, AlertCircle, RefreshCw, Loader2
 } from 'lucide-react';
 
 const horizon = new Horizon.Server(HORIZON_URL);
@@ -37,10 +51,12 @@ interface PosSystemProps {
 }
 
 export default function PosSystem({ ownerAddress }: PosSystemProps) {
+  const { user } = useAuth();
   const [activeTab, setActiveTab] = useState<'pos' | 'inventory' | 'history'>('pos');
   const [products, setProducts] = useState<Product[]>([]);
   const [cart, setCart] = useState<CartItem[]>([]);
   const [receipts, setReceipts] = useState<Receipt[]>([]);
+  const [loadingData, setLoadingData] = useState(true);
   
   // Inventory form
   const [newProductName, setNewProductName] = useState('');
@@ -55,62 +71,179 @@ export default function PosSystem({ ownerAddress }: PosSystemProps) {
   
   const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Load data from localStorage
+  // Firestore synchronizer & LocalStorage migration
   useEffect(() => {
-    const storedProducts = localStorage.getItem(`sari_products_${ownerAddress}`);
-    if (storedProducts) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setProducts(JSON.parse(storedProducts));
-    } else {
-      // Prepopulate mock products for demonstration
-      const mockProducts: Product[] = [
-        { id: 'prod_coke', name: 'Coca-Cola 1.5L', price: 5.0 },
-        { id: 'prod_lucky_me', name: 'Lucky Me Instant Noodles', price: 2.0 },
-        { id: 'prod_nagaraya', name: 'Nagaraya Garlic 80g', price: 1.5 },
-        { id: 'prod_fudgee', name: 'Fudgee Barr Chocolate', price: 1.0 },
-      ];
-      setProducts(mockProducts);
-      localStorage.setItem(`sari_products_${ownerAddress}`, JSON.stringify(mockProducts));
-    }
+    if (!user) return;
 
-    const storedReceipts = localStorage.getItem(`sari_receipts_${ownerAddress}`);
-    if (storedReceipts) {
-      setReceipts(JSON.parse(storedReceipts));
-    }
-  }, [ownerAddress]);
+    const syncAndListen = async () => {
+      setLoadingData(true);
 
-  // Save Products to LocalStorage
-  const saveProducts = (updatedProducts: Product[]) => {
-    setProducts(updatedProducts);
-    localStorage.setItem(`sari_products_${ownerAddress}`, JSON.stringify(updatedProducts));
-  };
+      const productsRef = collection(db, 'products');
+      const receiptsRef = collection(db, 'receipts');
 
-  // Add Product to Inventory
-  const handleAddProduct = (e: React.FormEvent) => {
+      // 1. Check if Firestore contains any products for this user
+      const productsQuery = query(productsRef, where('uid', '==', user.uid));
+      const productsSnap = await getDocs(productsQuery);
+      
+      const receiptsQuery = query(receiptsRef, where('uid', '==', user.uid));
+      const receiptsSnap = await getDocs(receiptsQuery);
+
+      const dbHasProducts = !productsSnap.empty;
+      const dbHasReceipts = !receiptsSnap.empty;
+
+      // 2. Perform Migration if Firestore is empty but LocalStorage has data
+      const storedProductsStr = localStorage.getItem(`sari_products_${ownerAddress}`);
+      const storedReceiptsStr = localStorage.getItem(`sari_receipts_${ownerAddress}`);
+
+      if (storedProductsStr && !dbHasProducts) {
+        try {
+          const localProducts = JSON.parse(storedProductsStr) as Product[];
+          for (const prod of localProducts) {
+            await setDoc(doc(db, 'products', prod.id), {
+              id: prod.id,
+              name: prod.name,
+              price: prod.price,
+              uid: user.uid,
+              ownerAddress: ownerAddress,
+              createdAt: Date.now()
+            });
+          }
+          console.log('Successfully migrated products from local storage to Firestore.');
+        } catch (err) {
+          console.error('Failed to migrate local products:', err);
+        }
+      } else if (!storedProductsStr && !dbHasProducts) {
+        // Prepopulate default mock products in Firestore on very first access
+        const mockProducts: Product[] = [
+          { id: 'prod_coke', name: 'Coca-Cola 1.5L', price: 5.0 },
+          { id: 'prod_lucky_me', name: 'Lucky Me Instant Noodles', price: 2.0 },
+          { id: 'prod_nagaraya', name: 'Nagaraya Garlic 80g', price: 1.5 },
+          { id: 'prod_fudgee', name: 'Fudgee Barr Chocolate', price: 1.0 },
+        ];
+        for (const prod of mockProducts) {
+          await setDoc(doc(db, 'products', prod.id), {
+            id: prod.id,
+            name: prod.name,
+            price: prod.price,
+            uid: user.uid,
+            ownerAddress: ownerAddress,
+            createdAt: Date.now()
+          });
+        }
+      }
+
+      if (storedReceiptsStr && !dbHasReceipts) {
+        try {
+          const localReceipts = JSON.parse(storedReceiptsStr) as Receipt[];
+          for (const rec of localReceipts) {
+            await addDoc(collection(db, 'receipts'), {
+              timestamp: rec.timestamp,
+              items: rec.items,
+              total: rec.total,
+              memo: rec.memo,
+              txHash: rec.txHash,
+              uid: user.uid,
+              merchantAddress: ownerAddress
+            });
+          }
+          console.log('Successfully migrated receipts from local storage to Firestore.');
+        } catch (err) {
+          console.error('Failed to migrate local receipts:', err);
+        }
+      }
+
+      // Cleanup local storage after migration
+      localStorage.removeItem(`sari_products_${ownerAddress}`);
+      localStorage.removeItem(`sari_receipts_${ownerAddress}`);
+
+      // 3. Set up Real-time listener for Products
+      const unsubscribeProducts = onSnapshot(productsQuery, (snapshot) => {
+        const prodsList: Product[] = [];
+        snapshot.forEach((docSnap) => {
+          const data = docSnap.data();
+          prodsList.push({
+            id: data.id,
+            name: data.name,
+            price: data.price
+          });
+        });
+        setProducts(prodsList);
+        setLoadingData(false);
+      });
+
+      // 4. Set up Real-time listener for Receipts
+      const unsubscribeReceipts = onSnapshot(
+        query(receiptsRef, where('uid', '==', user.uid), orderBy('timestamp', 'desc')),
+        (snapshot) => {
+          const recList: Receipt[] = [];
+          snapshot.forEach((docSnap) => {
+            const data = docSnap.data();
+            recList.push({
+              id: docSnap.id,
+              timestamp: data.timestamp,
+              items: data.items,
+              total: data.total,
+              memo: data.memo,
+              txHash: data.txHash
+            });
+          });
+          setReceipts(recList);
+        },
+        (err) => {
+          console.error('Receipts listener error:', err);
+        }
+      );
+
+      return () => {
+        unsubscribeProducts();
+        unsubscribeReceipts();
+      };
+    };
+
+    const cleanupPromise = syncAndListen();
+    return () => {
+      cleanupPromise.then((cleanup) => {
+        if (cleanup) cleanup();
+      });
+    };
+  }, [user, ownerAddress]);
+
+  // Add Product to Inventory in Firestore
+  const handleAddProduct = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newProductName.trim() || !newProductPrice) return;
+    if (!user || !newProductName.trim() || !newProductPrice) return;
     
     const priceNum = parseFloat(newProductPrice);
     if (isNaN(priceNum) || priceNum <= 0) return;
 
-    const newProduct: Product = {
-      id: `prod_${Date.now()}`,
-      name: newProductName.trim(),
-      price: priceNum,
-    };
-
-    const updated = [...products, newProduct];
-    saveProducts(updated);
-    setNewProductName('');
-    setNewProductPrice('');
+    const prodId = `prod_${Date.now()}`;
+    try {
+      await setDoc(doc(db, 'products', prodId), {
+        id: prodId,
+        name: newProductName.trim(),
+        price: priceNum,
+        uid: user.uid,
+        ownerAddress: ownerAddress,
+        createdAt: Date.now()
+      });
+      setNewProductName('');
+      setNewProductPrice('');
+    } catch (err) {
+      console.error('Failed to add product:', err);
+      alert('Failed to save product to database.');
+    }
   };
 
-  // Delete Product
-  const handleDeleteProduct = (id: string) => {
-    const updated = products.filter((p) => p.id !== id);
-    saveProducts(updated);
-    // Remove from cart if exists
-    setCart((prev) => prev.filter((item) => item.product.id !== id));
+  // Delete Product from Firestore
+  const handleDeleteProduct = async (id: string) => {
+    try {
+      await deleteDoc(doc(db, 'products', id));
+      // Remove from cart if exists
+      setCart((prev) => prev.filter((item) => item.product.id !== id));
+    } catch (err) {
+      console.error('Failed to delete product:', err);
+      alert('Failed to delete product.');
+    }
   };
 
   // Add Item to Cart (from manual list or scanning)
@@ -176,7 +309,7 @@ export default function PosSystem({ ownerAddress }: PosSystemProps) {
 
   // Poll Horizon for payment matching the activeMemo
   useEffect(() => {
-    if (checkoutState !== 'waiting') {
+    if (checkoutState !== 'waiting' || !user) {
       if (pollIntervalRef.current) {
         clearInterval(pollIntervalRef.current);
         pollIntervalRef.current = null;
@@ -194,19 +327,16 @@ export default function PosSystem({ ownerAddress }: PosSystemProps) {
             setActiveTxHash(tx.hash);
             setCheckoutState('paid');
             
-            // Add to receipt history
-            const newReceipt: Receipt = {
-              id: `rec_${Date.now()}`,
+            // Save receipt to Firestore
+            await addDoc(collection(db, 'receipts'), {
               timestamp: Date.now(),
-              items: [...cart],
+              items: cart,
               total: activeTotal,
               memo: activeMemo,
               txHash: tx.hash,
-            };
-            
-            const updatedReceipts = [newReceipt, ...receipts];
-            setReceipts(updatedReceipts);
-            localStorage.setItem(`sari_receipts_${ownerAddress}`, JSON.stringify(updatedReceipts));
+              uid: user.uid,
+              merchantAddress: ownerAddress,
+            });
             
             // Clear cart
             setCart([]);
@@ -232,26 +362,29 @@ export default function PosSystem({ ownerAddress }: PosSystemProps) {
         pollIntervalRef.current = null;
       }
     };
-  }, [checkoutState, activeMemo, ownerAddress, activeTotal, cart, receipts]);
+  }, [checkoutState, activeMemo, ownerAddress, activeTotal, cart, user]);
 
   // Simulate payment (bypasses blockchain for quick debugging on testnet if needed)
-  const simulatePaymentSuccess = () => {
-    setActiveTxHash('sim_hash_' + Math.random().toString(36).substring(7));
+  const simulatePaymentSuccess = async () => {
+    if (!user) return;
+    const mockHash = 'sim_hash_' + Math.random().toString(36).substring(7);
+    setActiveTxHash(mockHash);
     setCheckoutState('paid');
     
-    const newReceipt: Receipt = {
-      id: `rec_${Date.now()}`,
-      timestamp: Date.now(),
-      items: [...cart],
-      total: activeTotal,
-      memo: activeMemo,
-      txHash: 'simulated_tx_hash',
-    };
-    
-    const updatedReceipts = [newReceipt, ...receipts];
-    setReceipts(updatedReceipts);
-    localStorage.setItem(`sari_receipts_${ownerAddress}`, JSON.stringify(updatedReceipts));
-    setCart([]);
+    try {
+      await addDoc(collection(db, 'receipts'), {
+        timestamp: Date.now(),
+        items: cart,
+        total: activeTotal,
+        memo: activeMemo,
+        txHash: mockHash,
+        uid: user.uid,
+        merchantAddress: ownerAddress,
+      });
+      setCart([]);
+    } catch (err) {
+      console.error('Failed to save simulated payment:', err);
+    }
   };
 
   // Final URL that customer scans to open the web app customer checkout page
@@ -293,6 +426,13 @@ export default function PosSystem({ ownerAddress }: PosSystemProps) {
           <History className="w-4 h-4" /> Sales
         </button>
       </div>
+
+      {loadingData && activeTab !== 'pos' ? (
+        <div className="py-12 text-center text-gray-500 flex flex-col items-center justify-center gap-3">
+          <Loader2 className="w-8 h-8 animate-spin text-[#ff7a00]" />
+          <p className="text-xs">Loading database records...</p>
+        </div>
+      ) : null}
 
       {/* POS Cart Tab */}
       {activeTab === 'pos' && checkoutState === 'idle' && (
@@ -542,7 +682,7 @@ export default function PosSystem({ ownerAddress }: PosSystemProps) {
       )}
 
       {/* Products Tab (Inventory Catalog) */}
-      {activeTab === 'inventory' && (
+      {activeTab === 'inventory' && !loadingData && (
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           {/* Add product form */}
           <div className="glass rounded-2xl p-5 border border-card-border flex flex-col gap-4 self-start">
@@ -625,7 +765,7 @@ export default function PosSystem({ ownerAddress }: PosSystemProps) {
       )}
 
       {/* Sales History Tab */}
-      {activeTab === 'history' && (
+      {activeTab === 'history' && !loadingData && (
         <div className="glass rounded-2xl p-5 border border-card-border flex flex-col gap-4">
           <h3 className="font-bold text-base text-white">Completed Sales</h3>
           {receipts.length === 0 ? (
