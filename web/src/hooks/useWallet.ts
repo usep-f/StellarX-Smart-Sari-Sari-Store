@@ -1,5 +1,5 @@
 'use client';
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 
 const TIMEOUT_MS = 3000;
 
@@ -23,6 +23,14 @@ export function useWallet(): WalletState {
   const [publicKey, setPublicKey] = useState<string | null>(null);
   const [connecting, setConnecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Restore session from localStorage
+  useEffect(() => {
+    const stored = localStorage.getItem('sari_wallet_pubkey');
+    if (stored) {
+      setPublicKey(stored);
+    }
+  }, []);
 
   const connect = useCallback(async () => {
     setConnecting(true);
@@ -48,6 +56,7 @@ export function useWallet(): WalletState {
       }
 
       setPublicKey(access.address);
+      localStorage.setItem('sari_wallet_pubkey', access.address);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Failed to connect wallet');
     } finally {
@@ -58,6 +67,7 @@ export function useWallet(): WalletState {
   const disconnect = useCallback(() => {
     setPublicKey(null);
     setError(null);
+    localStorage.removeItem('sari_wallet_pubkey');
   }, []);
 
   return { publicKey, connecting, error, connect, disconnect };

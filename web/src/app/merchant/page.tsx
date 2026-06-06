@@ -211,7 +211,7 @@ export default function MerchantPage() {
   // Show loading indicator during session verification
   if (authLoading || !user) {
     return (
-      <div className="min-h-screen w-full flex flex-col items-center justify-center gap-3 bg-[#070a0e] text-gray-400">
+      <div className="min-h-screen w-full flex flex-col items-center justify-center gap-3 text-gray-400">
         <Loader2 className="w-10 h-10 animate-spin text-[#ff7a00]" />
         <p className="text-sm">Verifying merchant session...</p>
       </div>
@@ -221,7 +221,7 @@ export default function MerchantPage() {
   // Deny access if profile is not a merchant
   if (profile && profile.role !== 'merchant') {
     return (
-      <div className="min-h-screen w-full flex items-center justify-center p-4 bg-[#070a0e]">
+      <div className="min-h-screen w-full flex items-center justify-center p-4">
         <div className="max-w-md w-full glass rounded-3xl p-8 border border-red-500/20 text-center flex flex-col items-center gap-6">
           <div className="w-16 h-16 rounded-full bg-red-500/10 border border-red-500/20 flex items-center justify-center text-red-400">
             <AlertCircle className="w-8 h-8" />
@@ -252,7 +252,7 @@ export default function MerchantPage() {
   }
 
   return (
-    <main className="min-h-screen w-full py-8 px-4 sm:px-6">
+    <main className="min-h-screen w-full pt-24 pb-8 px-4 sm:px-6">
       <div className="mx-auto max-w-6xl flex flex-col gap-6">
         
         {/* Header */}
@@ -278,22 +278,8 @@ export default function MerchantPage() {
             </div>
           </div>
 
-          <div className="flex items-center gap-4 w-full sm:w-auto justify-between sm:justify-start">
-            <div className="text-left sm:text-right">
-              <p className="text-xs font-semibold text-white">{profile?.email}</p>
-              <p className="text-[10px] text-gray-500 uppercase tracking-wider font-bold">Merchant Account</p>
-            </div>
-            <div className="flex items-center gap-2">
-              <ConnectWallet {...wallet} />
-              <button 
-                onClick={logOut} 
-                className="p-2 bg-red-500/10 hover:bg-red-500/20 rounded-xl border border-red-500/20 text-red-400 hover:text-red-300 transition text-xs font-bold flex items-center gap-1.5"
-                title="Log Out"
-              >
-                <LogOut className="w-4 h-4" />
-                <span className="hidden md:inline">Sign Out</span>
-              </button>
-            </div>
+          <div className="flex items-center gap-2">
+            <ConnectWallet {...wallet} />
           </div>
         </header>
 
