@@ -5,12 +5,12 @@ import { useSearchParams, useRouter } from 'next/navigation';
 import CustomerPayment from '@/components/CustomerPayment';
 import QRScanner from '@/components/QRScanner';
 import { useAuth } from '@/context/AuthContext';
-import { ArrowLeft, ScanLine, HelpCircle, Loader2, LogOut, AlertCircle } from 'lucide-react';
+import { ArrowLeft, ScanLine, HelpCircle, Loader2, AlertCircle } from 'lucide-react';
 
 function CheckoutContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { profile, logOut } = useAuth();
+  useAuth();
   
   const merchantAddress = searchParams.get('to') || '';
   const amountStr = searchParams.get('amount') || '';
@@ -57,21 +57,6 @@ function CheckoutContent() {
               Securely scan and approve store invoice payments on Stellar.
             </p>
           </div>
-        </div>
-
-        <div className="flex items-center gap-4">
-          <div className="text-right hidden sm:block">
-            <p className="text-xs font-semibold text-white">{profile?.email}</p>
-            <p className="text-[10px] text-gray-500 uppercase tracking-wider font-bold">Customer Account</p>
-          </div>
-          <button 
-            onClick={logOut} 
-            className="p-2 bg-red-500/10 hover:bg-red-500/20 rounded-xl border border-red-500/20 text-red-400 hover:text-red-300 transition text-xs font-bold flex items-center gap-1.5"
-            title="Log Out"
-          >
-            <LogOut className="w-4 h-4" />
-            <span className="hidden sm:inline">Sign Out</span>
-          </button>
         </div>
       </header>
 
@@ -145,7 +130,7 @@ export default function CustomerPage() {
   // Show loading indicator during session verification
   if (authLoading || !user) {
     return (
-      <div className="min-h-screen w-full flex flex-col items-center justify-center gap-3 bg-[#070a0e] text-gray-400">
+      <div className="min-h-screen w-full flex flex-col items-center justify-center gap-3 bg-[#080a11] text-gray-400">
         <Loader2 className="w-10 h-10 animate-spin text-[#00c853]" />
         <p className="text-sm">Verifying customer session...</p>
       </div>
@@ -155,7 +140,7 @@ export default function CustomerPage() {
   // Deny access if profile is not a customer
   if (profile && profile.role !== 'customer') {
     return (
-      <div className="min-h-screen w-full flex items-center justify-center p-4 bg-[#070a0e]">
+      <div className="min-h-screen w-full flex items-center justify-center p-4 bg-[#080a11]">
         <div className="max-w-md w-full glass rounded-3xl p-8 border border-red-500/20 text-center flex flex-col items-center gap-6">
           <div className="w-16 h-16 rounded-full bg-red-500/10 border border-red-500/20 flex items-center justify-center text-red-400">
             <AlertCircle className="w-8 h-8" />

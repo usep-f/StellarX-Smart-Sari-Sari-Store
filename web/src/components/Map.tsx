@@ -26,6 +26,7 @@ interface MapProps {
   userLocation?: [number, number] | null;
   onMapClick?: (lat: number, lng: number) => void;
   selectedLocation?: [number, number] | null;
+  onStoreSelect?: (store: Store) => void;
 }
 
 export default function Map({
@@ -33,6 +34,7 @@ export default function Map({
   userLocation,
   onMapClick,
   selectedLocation,
+  onStoreSelect,
 }: MapProps) {
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<L.Map | null>(null);
@@ -128,18 +130,26 @@ export default function Map({
     // Populate stores
     stores.forEach((store) => {
       const popupContent = `
-        <div class="text-[#0b0f14] p-1">
-          <h4 class="font-bold text-sm mb-1">${store.name}</h4>
-          <p class="text-xs text-gray-500 font-mono mb-2">${store.owner.slice(0, 6)}...${store.owner.slice(-6)}</p>
+        <div class="text-[#080a11] p-1">
+          <h4 class="font-bold text-sm mb-1 text-white">${store.name}</h4>
+          <p class="text-xs text-gray-400 font-mono mb-2">${store.owner.slice(0, 6)}...${store.owner.slice(-6)}</p>
           <a href="/customer?to=${store.owner}" class="inline-block bg-[#ff7a00] hover:bg-[#e06b00] text-white text-xs font-semibold px-2 py-1 rounded transition">
             Pay Store
           </a>
         </div>
       `;
 
-      L.marker([store.lat, store.lng], { icon: storeIcon })
-        .bindPopup(popupContent)
-        .addTo(markerGroup);
+      const marker = L.marker([store.lat, store.lng], { icon: storeIcon });
+      
+      if (onStoreSelect) {
+        marker.on('click', () => {
+          onStoreSelect(store);
+        });
+      } else {
+        marker.bindPopup(popupContent);
+      }
+      
+      marker.addTo(markerGroup);
     });
 
     // User Location Marker (Leaf Green Glow)
@@ -149,7 +159,7 @@ export default function Map({
       } else {
         const userIcon = L.divIcon({
           html: `
-            <div class="w-6 h-6 rounded-full bg-[#00c853] border-2 border-white shadow-lg flex items-center justify-center text-white" style="box-shadow: 0 0 10px #00c853;">
+            <div class="w-6 h-6 rounded-full bg-[#00f0ff] border-2 border-white shadow-lg flex items-center justify-center text-white user-location-marker">
               📍
             </div>
           `,
@@ -190,7 +200,7 @@ export default function Map({
         selectedMarkerRef.current = null;
       }
     }
-  }, [stores, userLocation, selectedLocation]);
+  }, [stores, userLocation, selectedLocation, onStoreSelect]);
 
   return (
     <div className="relative w-full h-full min-h-[350px] rounded-2xl overflow-hidden border border-card-border shadow-xl">
