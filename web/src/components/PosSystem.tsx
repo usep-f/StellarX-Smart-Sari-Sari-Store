@@ -560,8 +560,8 @@ export default function PosSystem({ ownerAddress }: PosSystemProps) {
             <QRScanner
               onScanSuccess={handleBarcodeScanned}
               placeholderText="Scan a product QR code to add to cart"
-              simulateLabel="Simulate Product Scan"
-              simulateOptions={products.map((p) => ({
+              manualLabel="Manual Entry"
+              manualOptions={products.map((p) => ({
                 value: p.id,
                 label: `${p.name} (${p.price} XLM)`,
               }))}

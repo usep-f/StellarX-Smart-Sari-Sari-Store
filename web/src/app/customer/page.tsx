@@ -85,9 +85,9 @@ function CheckoutContent() {
           <QRScanner
             onScanSuccess={handlePaymentScanned}
             placeholderText="Scan store invoice QR code to start payment"
-            simulateLabel="Simulate Invoice Scan"
+            manualLabel="Simulate Invoice Scan"
             // Let them simulate scanning an invoice to a mock merchant address
-            simulateOptions={[
+            manualOptions={[
               {
                 value: `http://localhost:3000/customer?to=GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5&amount=8.50&memo=sari-12345`,
                 label: 'Simulate invoice: 8.50 XLM (Ate Nena)',
@@ -130,7 +130,7 @@ export default function CustomerPage() {
   // Show loading indicator during session verification
   if (authLoading || !user) {
     return (
-      <div className="min-h-screen w-full flex flex-col items-center justify-center gap-3 bg-[#080a11] text-gray-400">
+      <div className="min-h-screen w-full flex flex-col items-center justify-center gap-3 text-gray-400">
         <Loader2 className="w-10 h-10 animate-spin text-[#00c853]" />
         <p className="text-sm">Verifying customer session...</p>
       </div>
@@ -140,7 +140,7 @@ export default function CustomerPage() {
   // Deny access if profile is not a customer
   if (profile && profile.role !== 'customer') {
     return (
-      <div className="min-h-screen w-full flex items-center justify-center p-4 bg-[#080a11]">
+      <div className="min-h-screen w-full flex items-center justify-center p-4">
         <div className="max-w-md w-full glass rounded-3xl p-8 border border-red-500/20 text-center flex flex-col items-center gap-6">
           <div className="w-16 h-16 rounded-full bg-red-500/10 border border-red-500/20 flex items-center justify-center text-red-400">
             <AlertCircle className="w-8 h-8" />
@@ -171,7 +171,7 @@ export default function CustomerPage() {
   }
 
   return (
-    <main className="min-h-screen w-full py-8 px-4 sm:px-6">
+    <main className="min-h-screen w-full pt-24 pb-8 px-4 sm:px-6">
       <div className="mx-auto max-w-4xl">
         <Suspense 
           fallback={

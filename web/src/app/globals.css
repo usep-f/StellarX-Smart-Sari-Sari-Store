@@ -2,7 +2,7 @@
 @import "leaflet/dist/leaflet.css";
 
 :root {
-  --background: #080a11;
+  --background: #0a0816;
   --foreground: #f8fafc;
   --primary: #ff7a00;
   --primary-hover: #e06b00;
@@ -32,9 +32,11 @@ body {
   color: var(--foreground);
   font-family: var(--font-inter), system-ui, -apple-system, sans-serif;
   background-image: 
-    radial-gradient(circle at 50% -20%, #1e1d4a 0%, #080a11 70%),
+    radial-gradient(circle at 50% -20%, #1e1d4a 0%, #0a0816 70%),
     radial-gradient(circle at 10% 40%, rgba(255, 122, 0, 0.03) 0%, transparent 40%),
     radial-gradient(circle at 90% 70%, rgba(0, 240, 255, 0.03) 0%, transparent 40%);
+  background-attachment: fixed;
+  background-repeat: no-repeat;
   min-height: 100vh;
   overflow-x: hidden;
 }
@@ -74,7 +76,7 @@ h1, h2, h3, h4, h5, h6 {
   width: 100%;
   height: 100%;
   z-index: 10;
-  background-color: #080a11 !important;
+  background-color: var(--background) !important;
 }
 
 /* Custom Marker Styling */
@@ -170,7 +172,7 @@ h1, h2, h3, h4, h5, h6 {
   height: 6px;
 }
 ::-webkit-scrollbar-track {
-  background: #080a11;
+  background: var(--background);
 }
 ::-webkit-scrollbar-thumb {
   background: rgba(255,255,255,0.08);

@@ -83,7 +83,7 @@ export default function AuthPage() {
   };
 
   return (
-    <main className="min-h-screen w-full flex items-center justify-center py-12 px-4 sm:px-6 relative bg-radial from-[#0d131a] to-[#070a0e]">
+    <main className="min-h-screen w-full flex items-center justify-center pt-28 pb-12 px-4 sm:px-6 relative">
       
       {/* Decorative background glows */}
       <div className="absolute top-1/4 left-1/4 w-80 h-80 rounded-full bg-[#ff7a00]/5 blur-3xl pointer-events-none" />

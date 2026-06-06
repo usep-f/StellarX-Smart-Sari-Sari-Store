@@ -42,7 +42,7 @@ export default function Navbar() {
     { name: 'About Us', href: '/#about' },
     { name: 'Beneficiaries', href: '/#beneficiaries' },
     { name: 'FAQ', href: '/#faq' },
-    { name: 'Contact Us', href: '/#contact' },
+    { name: 'Community', href: '/#community' },
   ];
 
   const handleScrollTo = (e: React.MouseEvent<HTMLAnchorElement>, href: string) => {
@@ -69,14 +69,12 @@ export default function Navbar() {
   };
 
   return (
-    <header className={`fixed top-0 left-0 right-0 z-40 transition-all duration-300 px-4 sm:px-6 pt-4 ${
-      scrolled ? 'pb-2' : 'pb-4'
+    <header className={`fixed top-0 left-0 right-0 z-50 transition-all duration-300 ${
+      scrolled 
+        ? 'bg-background/95 backdrop-blur-2xl border-b border-white/5 shadow-2xl shadow-black/50 py-3' 
+        : 'bg-transparent py-5'
     }`}>
-      <div className={`mx-auto max-w-6xl rounded-2xl transition-all duration-300 ${
-        scrolled 
-          ? 'glass bg-background/80 border-white/5 py-3 px-6 shadow-lg shadow-black/30' 
-          : 'bg-transparent border-transparent py-4 px-4'
-      } flex items-center justify-between border`}>
+      <div className="mx-auto max-w-6xl px-4 sm:px-6 flex items-center justify-between">
         
         {/* Brand Logo */}
         <Link href="/" className="flex items-center gap-2 group">

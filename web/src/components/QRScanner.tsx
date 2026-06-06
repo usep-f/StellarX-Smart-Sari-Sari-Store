@@ -7,15 +7,15 @@ import { Camera, AlertCircle, RefreshCw } from 'lucide-react';
 interface QRScannerProps {
   onScanSuccess: (decodedText: string) => void;
   placeholderText?: string;
-  simulateOptions?: Array<{ value: string; label: string }>;
-  simulateLabel?: string;
+  manualOptions?: Array<{ value: string; label: string }>;
+  manualLabel?: string;
 }
 
 export default function QRScanner({
   onScanSuccess,
   placeholderText = 'Align QR code inside the frame to scan',
-  simulateOptions = [],
-  simulateLabel = 'Simulate Scan',
+  manualOptions = [],
+  manualLabel = 'Manual Entry',
 }: QRScannerProps) {
   const [cameraActive, setCameraActive] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -133,11 +133,11 @@ export default function QRScanner({
         </div>
       )}
 
-      {/* Desktop Simulator Fallback */}
-      {simulateOptions.length > 0 && (
+      {/* Manual Entry Fallback */}
+      {manualOptions.length > 0 && (
         <div className="border-t border-white/5 pt-3">
           <label className="flex text-xs font-medium text-gray-400 mb-1.5 items-center gap-1.5">
-            <RefreshCw className="w-3.5 h-3.5 animate-spin-slow" /> {simulateLabel} (Desktop Testing)
+            {manualLabel}
           </label>
           <div className="flex gap-2">
             <select
@@ -153,7 +153,7 @@ export default function QRScanner({
               <option value="" disabled>
                 -- Select item to scan --
               </option>
-              {simulateOptions.map((opt) => (
+              {manualOptions.map((opt) => (
                 <option key={opt.value} value={opt.value}>
                   {opt.label}
                 </option>

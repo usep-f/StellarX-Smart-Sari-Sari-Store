@@ -2,20 +2,19 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import dynamic from 'next/dynamic';
-import Image from 'next/image';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
 import { db } from '@/lib/firebase';
-import { collection, addDoc, getCountFromServer } from 'firebase/firestore';
+import { collection, getCountFromServer } from 'firebase/firestore';
 import { getAllStores, Store } from '@/lib/registryContract';
 import { server } from '@/lib/stellar';
 import { useToast } from '@/components/ui/Toast';
 import { 
   ChevronDown, ChevronUp, RefreshCw, Loader2, Coins, MapPin, 
-  User, ArrowRight, Check, HelpCircle, Shield, Globe, Cpu, X, Send,
+  User, ArrowRight, Check, HelpCircle, Shield, Globe, Cpu, X, Send, Code, Megaphone, MessageCircle,
   Store as StoreIcon
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { useAuth } from '@/context/AuthContext';
 
 // Dynamically import Map component (ssr: false) to prevent Next.js build errors
 const Map = dynamic(() => import('@/components/Map'), {
@@ -28,8 +27,8 @@ const Map = dynamic(() => import('@/components/Map'), {
 });
 
 export default function Home() {
-  const router = useRouter();
-  const { success, error } = useToast();
+  const { error } = useToast();
+  const { user, profile } = useAuth();
 
   // Store lists & user count states
   const [stores, setStores] = useState<Store[]>([]);
@@ -42,13 +41,6 @@ export default function Home() {
 
   // FAQ states
   const [openFaqIndex, setOpenFaqIndex] = useState<number | null>(null);
-
-  // Contact Form states
-  const [contactName, setContactName] = useState('');
-  const [contactEmail, setContactEmail] = useState('');
-  const [contactRole, setContactRole] = useState<'customer' | 'merchant'>('customer');
-  const [contactMessage, setContactMessage] = useState('');
-  const [submittingContact, setSubmittingContact] = useState(false);
 
   // Stellar testnet RPC health
   const [rpcStatus, setRpcStatus] = useState<'checking' | 'online' | 'degraded'>('checking');
@@ -126,35 +118,6 @@ export default function Home() {
     return () => clearInterval(interval);
   }, [loadStores, loadUserCount, checkRpcHealth]);
 
-  // Contact Form Submission Handler
-  const handleContactSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!contactName.trim() || !contactEmail.trim() || !contactMessage.trim()) {
-      error('Please complete all form fields.');
-      return;
-    }
-
-    setSubmittingContact(true);
-    try {
-      await addDoc(collection(db, 'contacts'), {
-        name: contactName.trim(),
-        email: contactEmail.trim(),
-        role: contactRole,
-        message: contactMessage.trim(),
-        timestamp: Date.now(),
-      });
-      success('Query sent! Our team will reach out soon.');
-      setContactName('');
-      setContactEmail('');
-      setContactMessage('');
-    } catch (err) {
-      console.error('Firestore contact save error:', err);
-      error('Could not submit. Please check database permissions.');
-    } finally {
-      setSubmittingContact(false);
-    }
-  };
-
   const faqItems = [
     {
       q: "How do I connect my wallet to the platform?",
@@ -179,13 +142,46 @@ export default function Home() {
   ];
 
   return (
-    <main className="min-h-screen w-full flex flex-col items-center">
+    <main className="min-h-screen w-full flex flex-col items-center bg-background overflow-x-hidden">
       
       {/* 1. HERO SECTION */}
-      <section id="hero" className="w-full max-w-6xl px-4 sm:px-6 pt-16 pb-20 grid grid-cols-1 lg:grid-cols-12 gap-12 items-center">
+      <section id="hero" className="w-full relative pt-24 pb-20 sm:pt-32 sm:pb-32 border-b border-white/5">
         
-        {/* Left column info */}
-        <div className="lg:col-span-7 flex flex-col items-start gap-6 text-left">
+        {/* Dynamic Blobby Background */}
+        <div className="absolute inset-0 overflow-hidden pointer-events-none">
+          <motion.div 
+            animate={{ 
+              x: ["0%", "15%", "-10%", "0%"], 
+              y: ["0%", "10%", "-15%", "0%"],
+              scale: [1, 1.2, 0.9, 1]
+            }}
+            transition={{ duration: 15, repeat: Infinity, ease: "easeInOut" }}
+            className="absolute top-[5%] left-[10%] w-[500px] h-[500px] bg-[#ff7a00] rounded-full mix-blend-screen opacity-[0.15] blur-[100px]" 
+          />
+          <motion.div 
+            animate={{ 
+              x: ["0%", "-15%", "15%", "0%"], 
+              y: ["0%", "15%", "10%", "0%"],
+              scale: [1, 1.1, 1.3, 1]
+            }}
+            transition={{ duration: 18, repeat: Infinity, ease: "easeInOut" }}
+            className="absolute top-[10%] right-[5%] w-[400px] h-[400px] bg-[#00f0ff] rounded-full mix-blend-screen opacity-[0.15] blur-[100px]" 
+          />
+          <motion.div 
+            animate={{ 
+              x: ["0%", "20%", "-15%", "0%"], 
+              y: ["0%", "-20%", "15%", "0%"],
+              scale: [1, 1.3, 1.1, 1]
+            }}
+            transition={{ duration: 20, repeat: Infinity, ease: "easeInOut" }}
+            className="absolute -bottom-[20%] left-[25%] w-[600px] h-[600px] bg-[#7000ff] rounded-full mix-blend-screen opacity-[0.15] blur-[120px]" 
+          />
+        </div>
+
+        <div className="w-full max-w-4xl mx-auto px-4 sm:px-6 flex flex-col items-center text-center relative z-10">
+        
+        {/* Content */}
+        <div className="w-full flex flex-col items-center gap-6">
           
           <motion.span 
             initial={{ opacity: 0, scale: 0.9 }}
@@ -211,7 +207,7 @@ export default function Home() {
             initial={{ opacity: 0, y: 15 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.2 }}
-            className="text-sm sm:text-base text-gray-400 max-w-xl leading-relaxed"
+            className="text-sm sm:text-base text-gray-400 max-w-2xl leading-relaxed mx-auto"
           >
             A high-speed decentralized Point-of-Sale invoice generator and discovery network. Empowering micro-retail merchants in the Philippines using low-cost Stellar settlements.
           </motion.p>
@@ -220,19 +216,13 @@ export default function Home() {
             initial={{ opacity: 0, y: 15 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.3 }}
-            className="flex flex-wrap gap-4 w-full sm:w-auto"
+            className="flex flex-wrap justify-center gap-4 w-full sm:w-auto"
           >
             <Link
-              href="/merchant"
+              href={user ? (profile?.role === 'merchant' ? '/merchant' : '/customer') : '/auth'}
               className="flex-1 sm:flex-initial bg-linear-to-r from-[#ff7a00] to-[#ffc700] hover:from-[#e06b00] hover:to-[#e0b000] text-white font-extrabold text-xs py-3.5 px-6 rounded-xl transition duration-200 flex items-center justify-center gap-1.5 shadow-lg shadow-[#ff7a00]/15 group"
             >
-              Launch Merchant POS <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition" />
-            </Link>
-            <Link
-              href="/customer"
-              className="flex-1 sm:flex-initial bg-white/5 hover:bg-white/10 text-white font-bold text-xs py-3.5 px-6 rounded-xl border border-white/10 transition duration-200 flex items-center justify-center gap-1.5"
-            >
-              Customer Pay Desk
+              {user ? 'Go to Dashboard' : 'Join Us'} <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition" />
             </Link>
           </motion.div>
 
@@ -256,7 +246,7 @@ export default function Home() {
                 {loadingStores ? (
                   <Loader2 className="w-4 h-4 animate-spin text-[#ff7a00]" />
                 ) : (
-                  `${stores.length + 37} Active`
+                  `${stores.length} Active`
                 )}
               </span>
             </div>
@@ -274,7 +264,7 @@ export default function Home() {
                 {loadingUsers ? (
                   <Loader2 className="w-4 h-4 animate-spin text-[#00f0ff]" />
                 ) : (
-                  `${userCount + 142} Linked`
+                  `${userCount} Linked`
                 )}
               </span>
             </div>
@@ -282,33 +272,13 @@ export default function Home() {
 
         </div>
 
-        {/* Right column graphic asset */}
-        <motion.div 
-          initial={{ opacity: 0, scale: 0.95 }}
-          animate={{ opacity: 1, scale: 1 }}
-          transition={{ duration: 0.6 }}
-          className="lg:col-span-5 flex justify-center items-center relative"
-        >
-          {/* Subtle glowing aura */}
-          <div className="absolute w-72 h-72 rounded-full bg-[#ff7a00]/5 blur-3xl pointer-events-none -z-10 animate-pulse" />
-          <div className="absolute w-64 h-64 rounded-full bg-[#00f0ff]/5 blur-3xl pointer-events-none -z-10" />
-          
-          <div className="relative border border-white/5 bg-slate-950/20 rounded-3xl p-4 shadow-2xl backdrop-blur-md overflow-hidden group">
-            <Image
-              src="/hero_card_graphic.png"
-              alt="Futuristic Cyber-Fintech Card Graphic"
-              width={420}
-              height={420}
-              priority
-              className="rounded-2xl transition duration-500 transform group-hover:scale-[1.02] group-hover:rotate-1"
-            />
-          </div>
-        </motion.div>
-
+        </div>
       </section>
 
       {/* 2. MAP SECTION */}
-      <section id="map" className="w-full max-w-6xl px-4 sm:px-6 py-20 flex flex-col gap-6 scroll-mt-20">
+      <section id="map" className="w-full bg-background py-20 border-b border-white/5 scroll-mt-20 relative">
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-[#00f0ff]/5 via-transparent to-transparent pointer-events-none -z-10" />
+        <div className="w-full max-w-6xl mx-auto px-4 sm:px-6 flex flex-col gap-6">
         
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>
@@ -403,10 +373,14 @@ export default function Home() {
           </AnimatePresence>
         </div>
 
+        </div>
       </section>
 
       {/* 3. ABOUT US SECTION */}
-      <section id="about" className="w-full max-w-6xl px-4 sm:px-6 py-20 flex flex-col gap-12 border-t border-white/5 scroll-mt-20">
+      <section id="about" className="w-full bg-slate-950/30 py-20 border-b border-white/5 scroll-mt-20 relative">
+        {/* Subtle background glow */}
+        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[400px] bg-[#00f0ff]/5 blur-[120px] rounded-full pointer-events-none -z-10" />
+        <div className="w-full max-w-6xl mx-auto px-4 sm:px-6 flex flex-col gap-12">
         
         <div className="text-center max-w-2xl mx-auto flex flex-col gap-3">
           <span className="text-[10px] text-[#00f0ff] uppercase tracking-widest font-extrabold text-neon-cyan">About Us</span>
@@ -453,10 +427,14 @@ export default function Home() {
 
         </div>
 
+        </div>
       </section>
 
       {/* 4. BENEFICIARIES SECTION */}
-      <section id="beneficiaries" className="w-full max-w-6xl px-4 sm:px-6 py-20 border-t border-white/5 scroll-mt-20">
+      <section id="beneficiaries" className="w-full bg-background py-20 border-b border-white/5 scroll-mt-20 relative">
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_bottom_left,_var(--tw-gradient-stops))] from-[#00f0ff]/5 via-transparent to-transparent pointer-events-none -z-10" />
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,_var(--tw-gradient-stops))] from-[#ff7a00]/5 via-transparent to-transparent pointer-events-none -z-10" />
+        <div className="w-full max-w-6xl mx-auto px-4 sm:px-6">
         
         <div className="text-center max-w-2xl mx-auto flex flex-col gap-3 mb-12">
           <span className="text-[10px] text-[#ffc700] uppercase tracking-widest font-extrabold">Beneficiaries</span>
@@ -496,13 +474,6 @@ export default function Home() {
                 </li>
               </ul>
             </div>
-            
-            <button
-              onClick={() => router.push('/customer')}
-              className="w-full bg-[#00f0ff] hover:bg-[#00d8e6] text-[#080a11] font-extrabold py-3.5 px-4 rounded-xl transition duration-200 flex items-center justify-center gap-1.5 shadow-lg shadow-[#00f0ff]/10 mt-4"
-            >
-              Open Customer Desk <ArrowRight className="w-4 h-4" />
-            </button>
           </div>
 
           {/* Store Owner Card */}
@@ -531,21 +502,17 @@ export default function Home() {
                 </li>
               </ul>
             </div>
-            
-            <button
-              onClick={() => router.push('/merchant')}
-              className="w-full bg-[#ff7a00] hover:bg-[#e06b00] text-white font-extrabold py-3.5 px-4 rounded-xl transition duration-200 flex items-center justify-center gap-1.5 shadow-lg shadow-[#ff7a00]/10 mt-4"
-            >
-              Launch Merchant POS <ArrowRight className="w-4 h-4" />
-            </button>
           </div>
 
         </div>
 
+        </div>
       </section>
 
       {/* 5. FAQ SECTION */}
-      <section id="faq" className="w-full max-w-4xl px-4 sm:px-6 py-20 border-t border-white/5 scroll-mt-20">
+      <section id="faq" className="w-full bg-slate-950/30 py-20 border-b border-white/5 scroll-mt-20 relative">
+        <div className="absolute top-0 inset-x-0 h-px bg-linear-to-r from-transparent via-[#00f0ff]/20 to-transparent" />
+        <div className="w-full max-w-4xl mx-auto px-4 sm:px-6">
         
         <div className="text-center max-w-2xl mx-auto flex flex-col gap-3 mb-10">
           <span className="text-[10px] text-[#00f0ff] uppercase tracking-widest font-extrabold text-neon-cyan">FAQ</span>
@@ -600,116 +567,56 @@ export default function Home() {
           })}
         </div>
 
+        </div>
       </section>
 
-      {/* 6. CONTACT FORM SECTION */}
-      <section id="contact" className="w-full max-w-2xl px-4 sm:px-6 py-20 border-t border-white/5 scroll-mt-20">
+      {/* 6. COMMUNITY HUB SECTION */}
+      <section id="community" className="w-full bg-background py-20 border-b border-white/5 scroll-mt-20 relative">
+        <div className="absolute top-0 right-0 w-96 h-96 bg-[#ff7a00]/5 blur-[100px] pointer-events-none -z-10" />
+        <div className="absolute bottom-0 left-0 w-96 h-96 bg-[#00f0ff]/5 blur-[100px] pointer-events-none -z-10" />
+        <div className="w-full max-w-4xl mx-auto px-4 sm:px-6">
         
-        <div className="glass rounded-3xl p-8 border border-white/5 shadow-2xl relative overflow-hidden flex flex-col gap-6">
-          <div className="absolute top-0 right-0 w-48 h-48 bg-[#ff7a00]/5 blur-3xl pointer-events-none" />
-          <div className="absolute bottom-0 left-0 w-48 h-48 bg-[#00f0ff]/5 blur-3xl pointer-events-none" />
-          
-          <div className="text-center flex flex-col gap-2">
-            <span className="text-[10px] text-[#ff7a00] uppercase tracking-widest font-extrabold">Support Desk</span>
-            <h2 className="text-2xl font-extrabold text-white tracking-tight">Get in Touch</h2>
-            <p className="text-xs text-gray-400 leading-relaxed max-w-md mx-auto">
-              Have questions about integrating your sari-sari store or using XLM payments? Drop us a line.
-            </p>
-          </div>
-
-          <form onSubmit={handleContactSubmit} className="flex flex-col gap-4 mt-2">
-            
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div className="flex flex-col gap-1.5">
-                <label className="text-[10px] text-gray-400 font-bold uppercase tracking-wider pl-1">Name</label>
-                <input
-                  type="text"
-                  placeholder="Your name"
-                  value={contactName}
-                  onChange={(e) => setContactName(e.target.value)}
-                  className="bg-slate-950/40 border border-white/5 focus:border-[#ff7a00] outline-none text-white rounded-xl py-3 px-4 text-xs transition duration-200 placeholder-gray-600"
-                  required
-                  disabled={submittingContact}
-                />
-              </div>
-
-              <div className="flex flex-col gap-1.5">
-                <label className="text-[10px] text-gray-400 font-bold uppercase tracking-wider pl-1">Email</label>
-                <input
-                  type="email"
-                  placeholder="name@domain.com"
-                  value={contactEmail}
-                  onChange={(e) => setContactEmail(e.target.value)}
-                  className="bg-slate-950/40 border border-white/5 focus:border-[#ff7a00] outline-none text-white rounded-xl py-3 px-4 text-xs transition duration-200 placeholder-gray-600"
-                  required
-                  disabled={submittingContact}
-                />
-              </div>
-            </div>
-
-            <div className="flex flex-col gap-1.5">
-              <label className="text-[10px] text-gray-400 font-bold uppercase tracking-wider pl-1">Your Role</label>
-              <div className="grid grid-cols-2 gap-3">
-                <button
-                  type="button"
-                  onClick={() => setContactRole('customer')}
-                  className={`py-3 rounded-xl border font-bold text-xs transition duration-200 cursor-pointer ${
-                    contactRole === 'customer' 
-                      ? 'bg-[#00f0ff]/10 border-[#00f0ff]/50 text-white' 
-                      : 'bg-slate-950/20 border-white/5 text-gray-500 hover:text-gray-300'
-                  }`}
-                  disabled={submittingContact}
-                >
-                  Customer
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setContactRole('merchant')}
-                  className={`py-3 rounded-xl border font-bold text-xs transition duration-200 cursor-pointer ${
-                    contactRole === 'merchant' 
-                      ? 'bg-[#ff7a00]/10 border-[#ff7a00]/50 text-white' 
-                      : 'bg-slate-950/20 border-white/5 text-gray-500 hover:text-gray-300'
-                  }`}
-                  disabled={submittingContact}
-                >
-                  Sari-Sari Owner
-                </button>
-              </div>
-            </div>
-
-            <div className="flex flex-col gap-1.5">
-              <label className="text-[10px] text-gray-400 font-bold uppercase tracking-wider pl-1">Message</label>
-              <textarea
-                placeholder="How can we help you?"
-                rows={4}
-                value={contactMessage}
-                onChange={(e) => setContactMessage(e.target.value)}
-                className="bg-slate-950/40 border border-white/5 focus:border-[#ff7a00] outline-none text-white rounded-xl py-3 px-4 text-xs transition duration-200 placeholder-gray-600 resize-none"
-                required
-                disabled={submittingContact}
-              />
-            </div>
-
-            <button
-              type="submit"
-              disabled={submittingContact}
-              className="bg-linear-to-r from-[#ff7a00] to-[#ffc700] hover:from-[#e06b00] hover:to-[#e0b000] text-white font-extrabold text-xs py-3.5 rounded-xl transition duration-200 flex items-center justify-center gap-1.5 shadow-lg shadow-[#ff7a00]/10 mt-2 cursor-pointer disabled:bg-gray-800 disabled:text-gray-500"
-            >
-              {submittingContact ? (
-                <>
-                  <Loader2 className="w-4 h-4 animate-spin" /> Submitting query...
-                </>
-              ) : (
-                <>
-                  <Send className="w-3.5 h-3.5" /> Submit Query
-                </>
-              )}
-            </button>
-
-          </form>
-
+        <div className="text-center flex flex-col gap-2 mb-10">
+          <span className="text-[10px] text-[#ff7a00] uppercase tracking-widest font-extrabold">Community & Support</span>
+          <h2 className="text-3xl font-extrabold tracking-tight text-white sm:text-4xl">Join the Network</h2>
+          <p className="text-xs sm:text-sm text-gray-400 leading-relaxed max-w-lg mx-auto">
+            Connect with other merchants, developers, and the core team. As a decentralized protocol, our community is our primary support desk.
+          </p>
         </div>
 
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
+          <a href="#" className="glass rounded-3xl p-6 border border-white/5 hover:border-[#ff7a00]/30 hover:shadow-lg hover:shadow-[#ff7a00]/10 transition duration-300 flex flex-col items-center text-center gap-4 group">
+            <div className="w-12 h-12 rounded-2xl bg-[#ff7a00]/10 flex items-center justify-center text-[#ff7a00] group-hover:scale-110 transition duration-300">
+              <MessageCircle className="w-6 h-6" />
+            </div>
+            <div>
+              <h3 className="font-extrabold text-white">Discord</h3>
+              <p className="text-xs text-gray-500 mt-1">Live support & developer chat</p>
+            </div>
+          </a>
+
+          <a href="#" className="glass rounded-3xl p-6 border border-white/5 hover:border-[#00f0ff]/30 hover:shadow-lg hover:shadow-[#00f0ff]/10 transition duration-300 flex flex-col items-center text-center gap-4 group">
+            <div className="w-12 h-12 rounded-2xl bg-[#00f0ff]/10 flex items-center justify-center text-[#00f0ff] group-hover:scale-110 transition duration-300">
+              <Megaphone className="w-6 h-6" />
+            </div>
+            <div>
+              <h3 className="font-extrabold text-white">X / Twitter</h3>
+              <p className="text-xs text-gray-500 mt-1">Announcements & updates</p>
+            </div>
+          </a>
+
+          <a href="#" className="glass rounded-3xl p-6 border border-white/5 hover:border-white/20 hover:shadow-lg transition duration-300 flex flex-col items-center text-center gap-4 group">
+            <div className="w-12 h-12 rounded-2xl bg-white/5 flex items-center justify-center text-white group-hover:scale-110 transition duration-300">
+              <Code className="w-6 h-6" />
+            </div>
+            <div>
+              <h3 className="font-extrabold text-white">GitHub</h3>
+              <p className="text-xs text-gray-500 mt-1">Contribute to the Soroban contracts</p>
+            </div>
+          </a>
+        </div>
+
+        </div>
       </section>
 
       {/* 7. FOOTER SECTION */}
