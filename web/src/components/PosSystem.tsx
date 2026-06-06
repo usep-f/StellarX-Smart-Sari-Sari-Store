@@ -323,7 +323,40 @@ export default function PosSystem({ ownerAddress }: PosSystemProps) {
         
         for (const tx of txs.records) {
           if (tx.memo === activeMemo && tx.successful) {
-            // Found successful transaction matching the memo!
+            // Fetch operations for this transaction to verify the amount and recipient
+            const opsPage = await tx.operations();
+            let hasValidPayment = false;
+
+            for (const op of opsPage.records) {
+              const opPayment = op as unknown as {
+                type: string;
+                to?: string;
+                asset_type?: string;
+                amount?: string;
+              };
+              if (
+                opPayment.type === 'payment' &&
+                opPayment.to === ownerAddress &&
+                opPayment.asset_type === 'native' &&
+                opPayment.amount
+              ) {
+                const amountPaid = parseFloat(opPayment.amount);
+                // Allow a tiny margin for float representation issues
+                if (Math.abs(amountPaid - activeTotal) < 0.00001) {
+                  hasValidPayment = true;
+                  break;
+                }
+              }
+            }
+
+            if (!hasValidPayment) {
+              console.warn(
+                `Transaction ${tx.hash} matched memo ${activeMemo} but did not contain a valid payment of ${activeTotal} XLM to ${ownerAddress}.`
+              );
+              continue; // Keep looking at other transactions
+            }
+
+            // Found successful transaction matching the memo and verifying payment details!
             setActiveTxHash(tx.hash);
             setCheckoutState('paid');
             
