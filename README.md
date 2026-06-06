@@ -1,117 +1,96 @@
 # Sari-Stellar POS & Map
 
-A decentralized Point-of-Sale (PoS) system and discovery map for local sari-sari stores in the Philippines. It operates entirely on the **Stellar Testnet** using native XLM.
+A decentralized Point-of-Sale (PoS) system and discovery map designed for local sari-sari stores in the Philippines, operating entirely on the Stellar Testnet.
 
-It covers:
-- **Soroban Smart Contract**: An on-chain store registry allowing owners to register coordinates and names.
-- **Fullstack POS Checkout**: Generates custom payment QR codes and polls the Horizon blockchain for real-time customer settlement.
+## Problem
+In the Philippines, sari-sari stores (neighborhood convenience stores) are the backbone of local retail, accounting for over 70% of retail transactions. However, these cash-only micro-businesses face issues like:
+1. **Lack of Digital Infrastructure**: Small owners cannot afford traditional card terminal POS setups due to setup costs and transactional fees.
+2. **Lack of Discovery**: Customers cannot easily locate shops that support digital or cashless payments.
+3. **No Financial Record-Keeping**: Manual cash boxes make tracking profits and transaction history tedious and prone to errors.
 
-```
-.
-├── web/                           # Next.js 15 + TypeScript + Tailwind frontend
-├── contracts/sari-sari-registry/  # Rust Soroban store registry contract
-├── scripts/                       # deploy-registry.ps1 (Windows deployment)
-├── Cargo.toml                     # Rust workspace
-└── CLAUDE.md                      # stack notes + Stellar gotchas
-```
+Sari-Stellar empowers these micro-merchants with a free, mobile-first, decentralized POS system requiring zero setup fees, while enabling local discovery via an on-chain store registry.
 
-## Prerequisites
+## How It Works
+The application supports two primary user flows:
 
-From the [workshop setup checklist](https://stellar-pup-qc-may-2026-checklist.vercel.app/):
+- **For Merchants (Store Owners)**:
+  1. **Connect & Register**: Connect their Freighter wallet and register their store on the Stellar blockchain with their shop name and GPS coordinates (extracted via browser geolocation or map pin).
+  2. **Inventory Management**: Add products to their store inventory, automatically generating unique product QR codes/barcodes.
+  3. **POS Checkout**: Add items to a virtual shopping cart by scanning product QR codes (using a webcam or mobile camera).
+  4. **Receive Payment**: Generate a checkout payment QR code containing the transaction amount and a unique reference memo.
+  5. **On-Chain Sync**: The merchant dashboard automatically listens to the blockchain, instantly confirming the payment and showing a receipt once the customer submits it.
 
-- **Node.js 20+** and **npm** — for the frontend.
-- **Freighter** browser extension — create a wallet, switch it to **Test Net**.
-- For the contract track: **Rust**, the `wasm32v1-none` target, and the **Stellar CLI**.
+- **For Customers**:
+  1. **Store Discovery**: Use the interactive store map to locate registered Stellar-enabled sari-sari stores nearby.
+  2. **Scan & Pay**: Scan the checkout QR code at a store, connect their Freighter wallet, review payment details, and authorize the transaction.
+  3. **Instant Settlement**: XLM is transferred directly to the merchant's address in under 5 seconds with near-zero network fees.
 
-You can run the **payments demo with just Node + Freighter** — Rust/CLI are only
-needed to deploy the Soroban contract.
+## How It Uses Stellar
+Stellar is the absolute core of Sari-Stellar:
+1. **Decentralized Store Registry (Soroban Smart Contract)**: A Rust smart contract (`sari-sari-registry`) deployed on the Stellar Testnet. Merchants register their store coordinates on-chain, and the discovery map queries the contract directly using simulation (read-only) to locate nearby stores.
+2. **Instant Settlement (Native XLM Payments)**: Purchase payments are settled peer-to-peer from the customer's Freighter wallet directly to the store owner's address. Transactions are settled in under 5 seconds with negligible fees.
+3. **Blockchain-Powered Sync (Horizon API)**: The checkout screen generates a payment request with a unique reference memo. The merchant's dashboard monitors payments to their address using Horizon. As soon as the customer signs and submits the transaction, the merchant's screen detects the matching memo on-chain and automatically updates to show the receipt.
+4. **Instant Onboarding (Stellar Friendbot)**: Seamless onboarding allowing new merchants and customers to request testnet XLM directly inside the app to start transacting immediately.
 
-### Install the contract toolchain (Windows)
+## Track
+Financial Inclusion & Social Impact / Open Track
 
-Install Rust and the Stellar CLI:
+## Tech Stack
+- Framework: Next.js 16.2.6 (React 19.2.4, TailwindCSS v4)
+- Stellar SDK: `@stellar/stellar-sdk` v15.1.0 and `@stellar/freighter-api` v6.0.1
+- Network: Testnet
+- Key Dependencies:
+  - `firebase` v12.14.0 (Cloud Firestore for product inventory storage/sync)
+  - `leaflet` v1.9.4 & `@types/leaflet` (for interactive map and store discovery)
+  - `html5-qrcode` v2.3.8 (for scanning product barcodes and payment QR codes)
+  - `qrcode.react` v4.2.0 (for generating product and invoice QR codes)
+  - `framer-motion` v12.40.0 (for smooth UI animations)
 
-```powershell
-winget install --id Rustlang.Rustup -e --accept-source-agreements --accept-package-agreements
-winget install --id Stellar.StellarCLI -e --accept-source-agreements --accept-package-agreements
-```
+## Setup & Run
+### Prerequisites
+- Node.js 20+ and npm
+- Freighter Browser Extension (installed and set to **Test Net**)
+- Rust, Cargo, target `wasm32v1-none`, and Stellar CLI (only required if deploying/modifying the smart contract)
 
-Then **open a new terminal** (so `cargo`/`stellar` land on PATH) and give Rust a
-working linker — pick one:
+### Step-by-Step Run Instructions
+```bash
+# 1. Clone the repository
+git clone https://github.com/usep-f/StellarX-Smart-Sari-Sari-Store.git
+cd StellarX-Smart-Sari-Sari-Store
 
-**Easiest — GNU toolchain** (no admin, no large download):
+# 2. Build & Deploy the smart contract (optional)
+# If you are on Windows, run the PowerShell script to build, deploy, and configure the contract:
+.\scripts\deploy-registry.ps1
+# (This compiles the Rust contract, uploads it to Testnet, and writes the resulting contract ID to web/.env.local)
 
-```powershell
-rustup default stable-x86_64-pc-windows-gnu
-rustup target add wasm32v1-none
-```
-
-**Or MSVC** (matches Stellar's docs): install the **Visual C++ Build Tools** (the
-"Desktop development with C++" workload), then:
-
-```powershell
-rustup target add wasm32v1-none
-```
-
-> If `cargo` fails with *"linker `link.exe` not found"*, you skipped the step
-> above — use the GNU toolchain or install the Build Tools.
-
-On macOS/Linux: install Rust from <https://rustup.rs>, run
-`rustup target add wasm32v1-none`, and install the Stellar CLI
-(`brew install stellar-cli`).
-
-## 1. Run the frontend (the part that demos immediately)
-
-```powershell
+# 3. Setup the Frontend
 cd web
-npm install        # already run if you scaffolded via this repo
+npm install
+
+# 4. Configure Environment Variables
+# The deploy-registry script automatically populates web/.env.local, but you can manually verify/edit it:
+#   NEXT_PUBLIC_REGISTRY_CONTRACT_ID=CDZEWZG3AHI4DFTD6O2AQE77JPDBQDAT7XJJYUWCWAS5G3FVCLH3CN33
+#   NEXT_PUBLIC_FIREBASE_API_KEY=...
+#   NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=...
+#   NEXT_PUBLIC_FIREBASE_PROJECT_ID=...
+#   NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=...
+#   NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=...
+#   NEXT_PUBLIC_FIREBASE_APP_ID=...
+
+# 5. Run the web application
 npm run dev
 ```
+Open `http://localhost:3000` in your browser. Open a second window/tab to simulate the customer payment flow!
 
-Open <http://localhost:3000>, then:
+## Network Details
+- Network: Stellar Testnet
+- RPC URL: `https://soroban-testnet.stellar.org`
+- Contract IDs:
+  - Registry Contract: `CDZEWZG3AHI4DFTD6O2AQE77JPDBQDAT7XJJYUWCWAS5G3FVCLH3CN33`
+- Asset issuers: Native XLM
 
-1. **Connect Freighter** (approve in the extension; make sure it's on Test Net).
-2. **Fund with Friendbot** — your XLM balance jumps to ~10,000.
-3. **Send a payment** to another *existing, funded* testnet account
-   (create one at <https://laboratory.stellar.org/#account-creator?network=test>).
-4. Watch the status go Building → Signing → Submitting → Confirming → Success,
-   then open the **Stellar Expert** link to see it on-chain.
+## Team
+- Joseph Umali — @usep-f
 
-`web/.env.local` is pre-filled with testnet config including the pre-deployed contract address.
-
-## 2. Build, test & deploy the Soroban contract
-
-```powershell
-# from the repo root
-cargo test                 # runs the contract unit tests (no network needed)
-
-# deploy to testnet + auto-wire the contract ID into web/.env.local
-.\scripts\deploy-registry.ps1
-```
-
-The deploy script will: create+fund a testnet identity (if needed), run
-`stellar contract build`, deploy, and write the new `NEXT_PUBLIC_REGISTRY_CONTRACT_ID` into `web/.env.local`. **Restart the frontend** using `.\dev.ps1` to pick up any new contract IDs.
-
-### The contract (`contracts/sari-sari-registry/src/lib.rs`)
-
-| Function | Purpose |
-|---|---|
-| `register_store(owner: Address, name: String, lat: i32, lng: i32)` | Register a new store coordinates & name. |
-| `deregister_store(owner: Address)` | Deletes a store from the registry. |
-| `get_all_stores() -> Vec<Store>` | Read-only method to fetch all registered stores. |
-
-## 3. Customizing & Extensions
-
-This is your custom dApp build. You can expand it with:
-- Store ratings and reviews.
-- Product list on-chain storage or decentralised storage (IPFS).
-- USDC support for payments (see CLAUDE.md for USDC SAC details).
-- Multi-signature shared store wallets.
-
-## Troubleshooting
-
-- **Freighter "not detected"** — install it, reload the page, and confirm it's unlocked.
-- **Payment fails `op_no_destination`** — fund the destination account first.
-- **`tx_bad_auth`** — wrong network passphrase; this app uses `Networks.TESTNET`.
-- **Map rendering only single tile** — resolved by automatically calling `map.invalidateSize()` on render.
-
-See **CLAUDE.md** for the full list of Stellar gotchas.
+## License
+MIT License
