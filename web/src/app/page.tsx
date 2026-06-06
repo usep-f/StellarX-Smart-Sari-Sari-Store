@@ -30,31 +30,7 @@ export default function Home() {
     setLoadingStores(true);
     try {
       const contractStores = await getAllStores();
-      
-      // Seed default mock stores to make the map look active immediately if contract is empty
-      const mockStores: Store[] = [
-        {
-          owner: 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5',
-          name: "Ate Nena's Tindahan (Demo)",
-          lat: 14.6535,
-          lng: 121.0485,
-        },
-        {
-          owner: 'GDZPPDBCG7HWRDIPNUXEALM4N4PTEPZZG33MREFLF6L5YTYYV3MYMEMO',
-          name: "Kuya Juan's Mart (Demo)",
-          lat: 14.6485,
-          lng: 121.0525,
-        },
-        {
-          owner: 'GACW52K7HJDEML2D6XWZLTN66J3EFLFRG2YJCYFL4NAT4AQH3ZLLMEMO',
-          name: "Lorna's Mini Store (Demo)",
-          lat: 14.6515,
-          lng: 121.0550,
-        },
-      ];
-
-      // Combine contract stores and mock stores
-      setStores([...contractStores, ...mockStores]);
+      setStores(contractStores);
     } catch (err) {
       console.error('Failed to load stores from contract:', err);
     } finally {

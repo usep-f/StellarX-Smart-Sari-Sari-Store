@@ -33,9 +33,17 @@ yarn-error.log*
 # env files (can opt-in for committing if needed)
 .env*
 
-# vercel
+# vercel & firebase
 .vercel
+.firebase/
+
+# stellar keys and credentials
+*.key
+*.seed
+.stellar/
+.soroban/
 
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+.agent

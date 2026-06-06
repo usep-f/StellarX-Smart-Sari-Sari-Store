@@ -2,6 +2,17 @@
 
 import { useState, useEffect } from 'react';
 import { useWallet } from '@/hooks/useWallet';
+import { useAuth } from '@/context/AuthContext';
+import { db } from '@/lib/firebase';
+import { 
+  collection, 
+  query, 
+  where, 
+  onSnapshot, 
+  addDoc, 
+  orderBy,
+  getDocs
+} from 'firebase/firestore';
 import { fetchBalances, Balances } from '@/lib/balances';
 import { fundTestnetAccount } from '@/lib/stellar';
 import { buildPaymentXDR } from '@/lib/payment';
@@ -33,6 +44,7 @@ export default function CustomerPayment({
 }: CustomerPaymentProps) {
   const wallet = useWallet();
   const { publicKey, connect, connecting, error: walletError } = wallet;
+  const { user } = useAuth();
 
   const [balances, setBalances] = useState<Balances | null>(null);
   const [loadingBalance, setLoadingBalance] = useState(false);
@@ -63,16 +75,83 @@ export default function CustomerPayment({
     if (publicKey) {
       // eslint-disable-next-line react-hooks/set-state-in-effect
       getBalances(publicKey);
-      
-      // Load purchase history
-      const stored = localStorage.getItem(`sari_purchases_${publicKey}`);
-      if (stored) {
-        setPurchases(JSON.parse(stored));
-      }
     } else {
       setBalances(null);
     }
   }, [publicKey]);
+
+  // Firestore purchases synchronizer & LocalStorage migration
+  useEffect(() => {
+    if (!user || !publicKey) return;
+
+    const syncAndListen = async () => {
+      const purchasesRef = collection(db, 'purchases');
+
+      // 1. Check if Firestore contains any purchases for this user
+      const purchasesQuery = query(
+        purchasesRef, 
+        where('uid', '==', user.uid),
+        orderBy('timestamp', 'desc')
+      );
+      
+      const qSnap = await getDocs(query(purchasesRef, where('uid', '==', user.uid)));
+      const dbHasPurchases = !qSnap.empty;
+
+      // 2. Perform Migration if Firestore is empty but LocalStorage has data
+      const storedPurchasesStr = localStorage.getItem(`sari_purchases_${publicKey}`);
+
+      if (storedPurchasesStr && !dbHasPurchases) {
+        try {
+          const localPurchases = JSON.parse(storedPurchasesStr) as PurchaseReceipt[];
+          for (const pur of localPurchases) {
+            await addDoc(collection(db, 'purchases'), {
+              uid: user.uid,
+              customerAddress: publicKey,
+              merchantAddress: pur.merchant,
+              amount: pur.amount,
+              memo: pur.memo,
+              txHash: pur.txHash,
+              timestamp: pur.timestamp
+            });
+          }
+          console.log('Successfully migrated purchases to Firestore.');
+        } catch (err) {
+          console.error('Failed to migrate local purchases:', err);
+        }
+      }
+
+      // Cleanup local storage
+      localStorage.removeItem(`sari_purchases_${publicKey}`);
+
+      // 3. Set up Real-time listener for Purchases
+      const unsubscribe = onSnapshot(purchasesQuery, (snapshot) => {
+        const purList: PurchaseReceipt[] = [];
+        snapshot.forEach((docSnap) => {
+          const data = docSnap.data();
+          purList.push({
+            id: docSnap.id,
+            timestamp: data.timestamp,
+            merchant: data.merchantAddress,
+            amount: data.amount,
+            memo: data.memo,
+            txHash: data.txHash
+          });
+        });
+        setPurchases(purList);
+      }, (err) => {
+        console.error('Purchases snapshot error:', err);
+      });
+
+      return () => unsubscribe();
+    };
+
+    const cleanupPromise = syncAndListen();
+    return () => {
+      cleanupPromise.then((unsubscribe) => {
+        if (unsubscribe) unsubscribe();
+      });
+    };
+  }, [user, publicKey]);
 
   // Request Friendbot funds
   const handleFund = async () => {
@@ -93,7 +172,7 @@ export default function CustomerPayment({
 
   // Run payment transaction
   const handlePay = async () => {
-    if (!publicKey || !merchantAddress || !amount || !memo) return;
+    if (!publicKey || !merchantAddress || !amount || !memo || !user) return;
     
     // Check balance
     if (balances && parseFloat(balances.xlm) < amount) {
@@ -120,19 +199,16 @@ export default function CustomerPayment({
       setTxHash(hash);
       setPaymentStatus('success');
 
-      // 3. Save receipt to local storage
-      const newPurchase: PurchaseReceipt = {
-        id: `pur_${Date.now()}`,
-        timestamp: Date.now(),
-        merchant: merchantAddress,
+      // 3. Save receipt to Firestore
+      await addDoc(collection(db, 'purchases'), {
+        uid: user.uid,
+        customerAddress: publicKey,
+        merchantAddress: merchantAddress,
         amount,
         memo,
         txHash: hash,
-      };
-
-      const updated = [newPurchase, ...purchases];
-      setPurchases(updated);
-      localStorage.setItem(`sari_purchases_${publicKey}`, JSON.stringify(updated));
+        timestamp: Date.now()
+      });
 
       // Refresh balances
       await getBalances(publicKey);
