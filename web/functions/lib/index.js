@@ -10,7 +10,7 @@ const stellar_sdk_1 = require("@stellar/stellar-sdk");
 const db = (0, firestore_1.getFirestore)();
 // In a real production setup, load this from config or environment variables
 const RPC_URL = 'https://soroban-testnet.stellar.org';
-const REGISTRY_CONTRACT_ID = process.env.REGISTRY_CONTRACT_ID || 'CAL34EKITEK7K42XTV77YX5F3OHZITY4VXX722JKITKNFUB2CAY4C5V2';
+const REGISTRY_CONTRACT_ID = process.env.REGISTRY_CONTRACT_ID || 'CAMXJESIHLZRZR2MCHN7BYFSEUO7YY2EFQ3ATJE2QRTYIKEPEZRYK65U';
 const INITIAL_LEDGER = 4321000;
 const server = new stellar_sdk_1.rpc.Server(RPC_URL);
 exports.syncStores = (0, scheduler_1.onSchedule)('every 12 hours', async () => {
