@@ -6,6 +6,7 @@ import { Horizon } from '@stellar/stellar-sdk';
 import { HORIZON_URL } from '@/lib/stellar';
 import QRScanner from './QRScanner';
 import { useAuth } from '@/context/AuthContext';
+import { useToast } from '@/components/ui/Toast';
 import { db } from '@/lib/firebase';
 import { 
   collection, 
@@ -21,7 +22,7 @@ import {
 } from 'firebase/firestore';
 import { 
   Plus, Trash2, ShoppingCart, Tag, History, CheckCircle2, 
-  ArrowRight, X, Printer, Package, ChevronRight, AlertCircle, RefreshCw, Loader2
+  ArrowRight, X, Printer, Package, ChevronRight, AlertCircle, RefreshCw, Loader2, Search
 } from 'lucide-react';
 
 const horizon = new Horizon.Server(HORIZON_URL);
@@ -30,7 +31,18 @@ interface Product {
   id: string;
   name: string;
   price: number; // in XLM
+  category?: string;
 }
+
+const PRESET_CATEGORIES = [
+  'Beverages',
+  'Snacks & Chips',
+  'Canned Goods',
+  'Instant Noodles',
+  'Household & Hygiene',
+  'Rice & Staples',
+  'Candies & Sweets'
+];
 
 interface CartItem {
   product: Product;
@@ -52,6 +64,7 @@ interface PosSystemProps {
 
 export default function PosSystem({ ownerAddress }: PosSystemProps) {
   const { user } = useAuth();
+  const { warning: showToastWarning, success: showToastSuccess, error: showToastError } = useToast();
   const [activeTab, setActiveTab] = useState<'pos' | 'inventory' | 'history'>('pos');
   const [products, setProducts] = useState<Product[]>([]);
   const [cart, setCart] = useState<CartItem[]>([]);
@@ -61,6 +74,15 @@ export default function PosSystem({ ownerAddress }: PosSystemProps) {
   // Inventory form
   const [newProductName, setNewProductName] = useState('');
   const [newProductPrice, setNewProductPrice] = useState('');
+  const [newProductCategory, setNewProductCategory] = useState('Beverages');
+  const [customCategoryActive, setCustomCategoryActive] = useState(false);
+  const [customCategoryName, setCustomCategoryName] = useState('');
+
+  // Catalog search, filtering & pagination
+  const [catalogSearchQuery, setCatalogSearchQuery] = useState('');
+  const [selectedFilterCategory, setSelectedFilterCategory] = useState('All');
+  const [currentPage, setCurrentPage] = useState(0);
+  const [historyPage, setHistoryPage] = useState(0);
   
   // Checkout & Payment State
   const [checkoutState, setCheckoutState] = useState<'idle' | 'waiting' | 'paid'>('idle');
@@ -155,6 +177,7 @@ export default function PosSystem({ ownerAddress }: PosSystemProps) {
               id: prod.id,
               name: prod.name,
               price: prod.price,
+              category: prod.category || 'Uncategorized',
               uid: user.uid,
               ownerAddress: ownerAddress,
               createdAt: Date.now()
@@ -167,16 +190,17 @@ export default function PosSystem({ ownerAddress }: PosSystemProps) {
       } else if (!storedProductsStr && !dbHasProducts) {
         // Prepopulate default mock products in Firestore on very first access
         const mockProducts: Product[] = [
-          { id: 'prod_coke', name: 'Coca-Cola 1.5L', price: 5.0 },
-          { id: 'prod_lucky_me', name: 'Lucky Me Instant Noodles', price: 2.0 },
-          { id: 'prod_nagaraya', name: 'Nagaraya Garlic 80g', price: 1.5 },
-          { id: 'prod_fudgee', name: 'Fudgee Barr Chocolate', price: 1.0 },
+          { id: 'prod_coke', name: 'Coca-Cola 1.5L', price: 5.0, category: 'Beverages' },
+          { id: 'prod_lucky_me', name: 'Lucky Me Instant Noodles', price: 2.0, category: 'Instant Noodles' },
+          { id: 'prod_nagaraya', name: 'Nagaraya Garlic 80g', price: 1.5, category: 'Snacks & Chips' },
+          { id: 'prod_fudgee', name: 'Fudgee Barr Chocolate', price: 1.0, category: 'Candies & Sweets' },
         ];
         for (const prod of mockProducts) {
           await setDoc(doc(db, 'stores', ownerAddress, 'products', prod.id), {
             id: prod.id,
             name: prod.name,
             price: prod.price,
+            category: prod.category || 'Uncategorized',
             uid: user.uid,
             ownerAddress: ownerAddress,
             createdAt: Date.now()
@@ -216,7 +240,8 @@ export default function PosSystem({ ownerAddress }: PosSystemProps) {
           prodsList.push({
             id: data.id,
             name: data.name,
-            price: data.price
+            price: data.price,
+            category: data.category || 'Uncategorized'
           });
         });
         setProducts(prodsList);
@@ -268,21 +293,31 @@ export default function PosSystem({ ownerAddress }: PosSystemProps) {
     const priceNum = parseFloat(newProductPrice);
     if (isNaN(priceNum) || priceNum <= 0) return;
 
+    // Determine category based on whether custom category is selected
+    const categoryToSave = customCategoryActive
+      ? (customCategoryName.trim() || 'Uncategorized')
+      : newProductCategory;
+
     const prodId = `prod_${Date.now()}`;
     try {
       await setDoc(doc(db, 'stores', ownerAddress, 'products', prodId), {
         id: prodId,
         name: newProductName.trim(),
         price: priceNum,
+        category: categoryToSave,
         uid: user.uid,
         ownerAddress: ownerAddress,
         createdAt: Date.now()
       });
       setNewProductName('');
       setNewProductPrice('');
+      setCustomCategoryName('');
+      setCustomCategoryActive(false);
+      setNewProductCategory('Beverages');
+      showToastSuccess(`Saved product "${newProductName.trim()}" successfully.`);
     } catch (err) {
       console.error('Failed to add product:', err);
-      alert('Failed to save product to database.');
+      showToastError('Failed to save product to database.');
     }
   };
 
@@ -294,7 +329,7 @@ export default function PosSystem({ ownerAddress }: PosSystemProps) {
       setCart((prev) => prev.filter((item) => item.product.id !== id));
     } catch (err) {
       console.error('Failed to delete product:', err);
-      alert('Failed to delete product.');
+      showToastError('Failed to delete product.');
     }
   };
 
@@ -313,13 +348,35 @@ export default function PosSystem({ ownerAddress }: PosSystemProps) {
     });
   };
 
-  // Handle scanned product barcode (Product ID)
+  // Handle scanned/typed product barcode (Product ID or Name)
   const handleBarcodeScanned = (scannedText: string) => {
-    const product = products.find((p) => p.id === scannedText);
+    const queryStr = scannedText.trim();
+    if (!queryStr) return;
+
+    // 1. Try to find exact match by ID
+    let product = products.find((p) => p.id === queryStr);
+
+    // 2. Try to find case-insensitive exact match by name
+    if (!product) {
+      product = products.find((p) => p.name.toLowerCase() === queryStr.toLowerCase());
+    }
+
+    // 3. Try to find case-insensitive partial match by name
+    if (!product) {
+      const matches = products.filter((p) => p.name.toLowerCase().includes(queryStr.toLowerCase()));
+      if (matches.length === 1) {
+        product = matches[0];
+      } else if (matches.length > 1) {
+        showToastWarning(`Multiple products match "${queryStr}": ${matches.map((m) => m.name).join(', ')}. Please be more specific.`);
+        return;
+      }
+    }
+
     if (product) {
       addToCart(product);
+      showToastSuccess(`Added ${product.name} to cart.`);
     } else {
-      alert(`Scanned code "${scannedText}" does not match any product in inventory.`);
+      showToastWarning(`Product "${queryStr}" does not match any product in inventory.`);
     }
   };
 
@@ -523,7 +580,7 @@ export default function PosSystem({ ownerAddress }: PosSystemProps) {
       {activeTab === 'pos' && checkoutState === 'idle' && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* Cart items */}
-          <div className="lg:col-span-2 flex flex-col gap-4">
+          <div className="lg:col-span-2 flex flex-col gap-4 order-2 lg:order-1">
             <div className="glass rounded-2xl p-5 flex flex-col gap-4 border border-card-border">
               <div className="flex items-center justify-between">
                 <h3 className="font-bold text-lg text-white">Active Purchase</h3>
@@ -608,14 +665,16 @@ export default function PosSystem({ ownerAddress }: PosSystemProps) {
           </div>
 
           {/* Scanner Panel */}
-          <div>
+          <div className="order-1 lg:order-2">
             <QRScanner
               onScanSuccess={handleBarcodeScanned}
               placeholderText="Scan a product QR code to add to cart"
-              manualLabel="Manual Entry"
+              manualLabel="Manual Entry / Barcode Search"
+              manualMode="text"
               manualOptions={products.map((p) => ({
                 value: p.id,
-                label: `${p.name} (${p.price} XLM)`,
+                label: `${p.name} (${p.price.toFixed(2)} XLM)`,
+                searchText: p.name,
               }))}
             />
 
@@ -777,142 +836,348 @@ export default function PosSystem({ ownerAddress }: PosSystemProps) {
 
       {/* Products Tab (Inventory Catalog) */}
       {activeTab === 'inventory' && !loadingData && (
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          {/* Add product form */}
-          <div className="glass rounded-2xl p-5 border border-card-border flex flex-col gap-4 self-start">
-            <h3 className="font-bold text-base text-white">Add New Product</h3>
-            <form onSubmit={handleAddProduct} className="flex flex-col gap-3">
-              <div className="flex flex-col gap-1">
-                <label className="text-[11px] text-gray-400 font-medium">Product Name</label>
-                <input
-                  type="text"
-                  placeholder="e.g. Pancit Canton"
-                  value={newProductName}
-                  onChange={(e) => setNewProductName(e.target.value)}
-                  className="bg-[#161c24] border border-card-border rounded-xl p-2.5 text-xs text-white placeholder-gray-600 outline-none focus:border-[#ff7a00] transition"
-                  required
-                />
-              </div>
-              <div className="flex flex-col gap-1">
-                <label className="text-[11px] text-gray-400 font-medium">Price (XLM)</label>
-                <input
-                  type="number"
-                  step="0.01"
-                  placeholder="e.g. 2.50"
-                  value={newProductPrice}
-                  onChange={(e) => setNewProductPrice(e.target.value)}
-                  className="bg-[#161c24] border border-card-border rounded-xl p-2.5 text-xs text-white placeholder-gray-600 outline-none focus:border-[#ff7a00] transition"
-                  required
-                />
-              </div>
-              <button
-                type="submit"
-                className="w-full bg-[#ff7a00] hover:bg-[#e06b00] text-white font-semibold py-2.5 rounded-xl transition mt-2 flex items-center justify-center gap-1.5"
-              >
-                <Plus className="w-4 h-4" /> Save Product
-              </button>
-            </form>
-          </div>
+        (() => {
+          // Get unique categories currently present in inventory
+          const uniqueCategories = ['All', ...Array.from(new Set(products.map((p) => p.category || 'Uncategorized')))];
 
-          {/* Catalog grid */}
-          <div className="md:col-span-2 glass rounded-2xl p-5 border border-card-border flex flex-col gap-4">
-            <h3 className="font-bold text-base text-white">Product Catalog</h3>
-            {products.length === 0 ? (
-              <p className="text-xs text-gray-500 py-6 text-center">No products in inventory.</p>
-            ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-h-[480px] overflow-y-auto pr-1">
-                {products.map((p) => (
-                  <div
-                    key={p.id}
-                    className="flex flex-col gap-3 p-4 rounded-xl bg-[#161c24]/50 border border-white/5 hover:border-white/10 transition group relative"
-                  >
-                    <div className="flex justify-between items-start gap-4">
-                      <div>
-                        <h4 className="font-bold text-xs text-white">{p.name}</h4>
-                        <p className="text-[10px] text-[#ffc700] font-bold mt-0.5">{p.price.toFixed(2)} XLM</p>
-                      </div>
-                      <button
-                        onClick={() => handleDeleteProduct(p.id)}
-                        className="text-gray-500 hover:text-red-400 p-1 opacity-0 group-hover:opacity-100 transition absolute top-2 right-2"
-                        title="Delete Product"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
+          // Filter products based on search query and selected filter category
+          const filteredProducts = products.filter((p) => {
+            const matchesSearch = p.name.toLowerCase().includes(catalogSearchQuery.toLowerCase()) ||
+                                  p.id.toLowerCase().includes(catalogSearchQuery.toLowerCase());
+            const matchesCategory = selectedFilterCategory === 'All' ||
+                                    (p.category || 'Uncategorized') === selectedFilterCategory;
+            return matchesSearch && matchesCategory;
+          });
 
-                    {/* Product barcode representation */}
-                    <div className="flex items-center gap-3 bg-black/30 p-2 rounded-lg border border-white/5 mt-auto">
-                      <div className="bg-white p-1 rounded border border-gray-200">
-                        <QRCodeSVG value={p.id} size={50} />
-                      </div>
-                      <div>
-                        <span className="text-[10px] block font-mono text-gray-500">ID barcode:</span>
-                        <span className="text-[10px] font-mono font-bold text-gray-400 truncate max-w-[120px] block">{p.id}</span>
-                      </div>
-                    </div>
+          const ITEMS_PER_PAGE = 4;
+          const totalPages = Math.ceil(filteredProducts.length / ITEMS_PER_PAGE);
+          const startIndex = currentPage * ITEMS_PER_PAGE;
+          const paginatedProducts = filteredProducts.slice(startIndex, startIndex + ITEMS_PER_PAGE);
+
+          return (
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              {/* Add product form */}
+              <div className="glass rounded-2xl p-5 border border-card-border flex flex-col gap-4 self-start">
+                <h3 className="font-bold text-base text-white">Add New Product</h3>
+                <form onSubmit={handleAddProduct} className="flex flex-col gap-3">
+                  <div className="flex flex-col gap-1">
+                    <label className="text-[11px] text-gray-400 font-medium">Product Name</label>
+                    <input
+                      type="text"
+                      placeholder="e.g. Pancit Canton"
+                      value={newProductName}
+                      onChange={(e) => setNewProductName(e.target.value)}
+                      className="bg-[#161c24] border border-card-border rounded-xl p-2.5 text-xs text-white placeholder-gray-600 outline-none focus:border-[#ff7a00] transition"
+                      required
+                    />
                   </div>
-                ))}
+                  
+                  <div className="flex flex-col gap-1">
+                    <label className="text-[11px] text-gray-400 font-medium">Price (XLM)</label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      placeholder="e.g. 2.50"
+                      value={newProductPrice}
+                      onChange={(e) => setNewProductPrice(e.target.value)}
+                      className="bg-[#161c24] border border-card-border rounded-xl p-2.5 text-xs text-white placeholder-gray-600 outline-none focus:border-[#ff7a00] transition"
+                      required
+                    />
+                  </div>
+
+                  <div className="flex flex-col gap-1">
+                    <label className="text-[11px] text-gray-400 font-medium">Category</label>
+                    <select
+                      value={customCategoryActive ? 'custom' : newProductCategory}
+                      onChange={(e) => {
+                        if (e.target.value === 'custom') {
+                          setCustomCategoryActive(true);
+                        } else {
+                          setCustomCategoryActive(false);
+                          setNewProductCategory(e.target.value);
+                        }
+                      }}
+                      className="bg-[#161c24] border border-card-border rounded-xl p-2.5 text-xs text-white outline-none focus:border-[#ff7a00] transition"
+                    >
+                      {PRESET_CATEGORIES.map((cat) => (
+                        <option key={cat} value={cat}>
+                          {cat}
+                        </option>
+                      ))}
+                      <option value="custom">➕ Custom Category...</option>
+                    </select>
+                  </div>
+
+                  {customCategoryActive && (
+                    <div className="flex flex-col gap-1 animate-fadeIn">
+                      <label className="text-[11px] text-gray-400 font-medium">Custom Category Name</label>
+                      <input
+                        type="text"
+                        placeholder="e.g. Bakeries"
+                        value={customCategoryName}
+                        onChange={(e) => setCustomCategoryName(e.target.value)}
+                        className="bg-[#161c24] border border-card-border rounded-xl p-2.5 text-xs text-white placeholder-gray-600 outline-none focus:border-[#ff7a00] transition"
+                        required
+                      />
+                    </div>
+                  )}
+
+                  <button
+                    type="submit"
+                    className="w-full bg-[#ff7a00] hover:bg-[#e06b00] text-white font-semibold py-2.5 rounded-xl transition mt-2 flex items-center justify-center gap-1.5"
+                  >
+                    <Plus className="w-4 h-4" /> Save Product
+                  </button>
+                </form>
               </div>
-            )}
-          </div>
-        </div>
+
+              {/* Catalog grid */}
+              <div className="md:col-span-2 glass rounded-2xl p-5 border border-card-border flex flex-col gap-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-2 border-b border-white/5">
+                  <h3 className="font-bold text-base text-white">Product Catalog</h3>
+                  
+                  {/* Search Bar */}
+                  <div className="relative w-full sm:max-w-xs">
+                    <input
+                      type="text"
+                      placeholder="Search by name or ID..."
+                      value={catalogSearchQuery}
+                      onChange={(e) => {
+                        setCatalogSearchQuery(e.target.value);
+                        setCurrentPage(0);
+                      }}
+                      className="w-full bg-[#161c24] border border-card-border rounded-xl pl-8 pr-3 py-1.5 text-xs text-white placeholder-gray-600 outline-none focus:border-[#ff7a00] transition"
+                    />
+                    <Search className="w-3.5 h-3.5 text-gray-500 absolute left-2.5 top-1/2 -translate-y-1/2" />
+                    {catalogSearchQuery && (
+                      <button
+                        onClick={() => {
+                          setCatalogSearchQuery('');
+                          setCurrentPage(0);
+                        }}
+                        className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-500 hover:text-white cursor-pointer"
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Category Filter Pills */}
+                {products.length > 0 && (
+                  <div className="flex gap-1.5 overflow-x-auto pb-2 scrollbar-thin scrollbar-thumb-white/5">
+                    {uniqueCategories.map((cat) => (
+                      <button
+                        key={cat}
+                        onClick={() => {
+                          setSelectedFilterCategory(cat);
+                          setCurrentPage(0);
+                        }}
+                        className={`text-[10px] font-extrabold uppercase tracking-wider px-3 py-1.5 rounded-lg border transition whitespace-nowrap cursor-pointer ${
+                          selectedFilterCategory === cat
+                            ? 'bg-[#ff7a00] border-[#ff7a00] text-white shadow-md shadow-[#ff7a00]/10'
+                            : 'bg-white/5 border-white/5 text-gray-400 hover:text-white hover:border-white/10'
+                        }`}
+                      >
+                        {cat}
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                {filteredProducts.length === 0 ? (
+                  <p className="text-xs text-gray-500 py-12 text-center">No matching products found.</p>
+                ) : (
+                  <>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 min-h-[140px] pr-1">
+                      {paginatedProducts.map((p) => (
+                        <div
+                          key={p.id}
+                          className="flex flex-col gap-3 p-4 rounded-xl bg-[#161c24]/50 border border-white/5 hover:border-white/10 transition group relative"
+                        >
+                          <div className="flex justify-between items-start gap-4">
+                            <div>
+                              <div className="flex items-center gap-1.5">
+                                <h4 className="font-bold text-xs text-white">{p.name}</h4>
+                                <span className="text-[8px] bg-white/5 border border-white/10 text-gray-400 font-extrabold uppercase px-1.5 py-0.5 rounded">
+                                  {p.category || 'Uncategorized'}
+                                </span>
+                              </div>
+                              <p className="text-[10px] text-[#ffc700] font-bold mt-1">{p.price.toFixed(2)} XLM</p>
+                            </div>
+                            <button
+                              onClick={() => handleDeleteProduct(p.id)}
+                              className="text-gray-500 hover:text-red-400 p-1 opacity-0 group-hover:opacity-100 transition absolute top-2 right-2 cursor-pointer"
+                              title="Delete Product"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+
+                          {/* Product barcode representation */}
+                          <div className="flex items-center gap-3 bg-black/30 p-2 rounded-lg border border-white/5 mt-auto">
+                            <div className="bg-white p-1 rounded border border-gray-200 shrink-0">
+                              <QRCodeSVG value={p.id} size={42} />
+                            </div>
+                            <div className="min-w-0">
+                              <span className="text-[9px] block font-mono text-gray-500">ID barcode:</span>
+                              <span className="text-[9px] font-mono font-bold text-gray-400 truncate max-w-[120px] block">{p.id}</span>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Pagination Controls */}
+                    {totalPages > 1 && (
+                      <div className="flex flex-col sm:flex-row items-center justify-between gap-3 border-t border-white/5 pt-4 mt-auto">
+                        <span className="text-[10px] text-gray-500 font-medium">
+                          Showing {startIndex + 1} to {Math.min(startIndex + ITEMS_PER_PAGE, filteredProducts.length)} of {filteredProducts.length} items
+                        </span>
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            onClick={() => setCurrentPage((prevPage) => Math.max(0, prevPage - 1))}
+                            disabled={currentPage === 0}
+                            className="px-2.5 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 border border-white/5 disabled:bg-gray-800/20 disabled:text-gray-600 disabled:border-transparent text-xs text-gray-300 font-semibold transition cursor-pointer"
+                          >
+                            Prev
+                          </button>
+                          {Array.from({ length: totalPages }).map((_, idx) => (
+                            <button
+                              key={idx}
+                              onClick={() => setCurrentPage(idx)}
+                              className={`w-7 h-7 flex items-center justify-center rounded-lg text-xs font-bold transition cursor-pointer ${
+                                currentPage === idx
+                                  ? 'bg-[#ff7a00] text-white shadow-md shadow-[#ff7a00]/10'
+                                  : 'bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white'
+                              }`}
+                            >
+                              {idx + 1}
+                            </button>
+                          ))}
+                          <button
+                            onClick={() => setCurrentPage((prevPage) => Math.min(totalPages - 1, prevPage + 1))}
+                            disabled={currentPage === totalPages - 1}
+                            className="px-2.5 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 border border-white/5 disabled:bg-gray-800/20 disabled:text-gray-600 disabled:border-transparent text-xs text-gray-300 font-semibold transition cursor-pointer"
+                          >
+                            Next
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+            </div>
+          );
+        })()
       )}
 
       {/* Sales History Tab */}
       {activeTab === 'history' && !loadingData && (
-        <div className="glass rounded-2xl p-5 border border-card-border flex flex-col gap-4">
-          <h3 className="font-bold text-base text-white">Completed Sales</h3>
-          {receipts.length === 0 ? (
-            <div className="py-12 text-center text-gray-500 flex flex-col items-center gap-2">
-              <History className="w-12 h-12 text-gray-700" />
-              <p className="text-sm">No sales history yet.</p>
-              <p className="text-xs">Your completed on-chain POS transactions will show up here.</p>
-            </div>
-          ) : (
-            <div className="flex flex-col gap-4 max-h-[500px] overflow-y-auto pr-1">
-              {receipts.map((rec) => (
-                <div
-                  key={rec.id}
-                  className="p-4 rounded-xl bg-white/5 border border-white/5 hover:border-white/10 transition flex flex-col gap-3"
-                >
-                  <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/5 pb-2">
-                    <div>
-                      <span className="font-semibold text-xs text-white">Invoice {rec.memo}</span>
-                      <span className="text-[10px] text-gray-500 block">{new Date(rec.timestamp).toLocaleString()}</span>
-                    </div>
-                    <span className="font-mono text-xs font-bold text-[#00c853] bg-[#00c853]/10 border border-[#00c853]/20 px-2.5 py-0.5 rounded-full">
-                      +{rec.total.toFixed(2)} XLM
-                    </span>
-                  </div>
+        (() => {
+          const HISTORY_ITEMS_PER_PAGE = 4;
+          const totalHistoryPages = Math.ceil(receipts.length / HISTORY_ITEMS_PER_PAGE);
+          const activeHistoryPage = receipts.length > 0 ? Math.max(0, Math.min(historyPage, totalHistoryPages - 1)) : 0;
+          const startHistoryIndex = activeHistoryPage * HISTORY_ITEMS_PER_PAGE;
+          const paginatedReceipts = receipts.slice(startHistoryIndex, startHistoryIndex + HISTORY_ITEMS_PER_PAGE);
 
-                  {/* Items purchased */}
-                  <div className="flex flex-col gap-1 text-[11px] text-gray-400">
-                    {rec.items.map((item) => (
-                      <div key={item.product.id} className="flex justify-between">
-                        <span>
-                          {item.product.name} <span className="text-gray-500">x{item.quantity}</span>
-                        </span>
-                        <span className="font-mono">{(item.product.price * item.quantity).toFixed(2)} XLM</span>
+          return (
+            <div className="glass rounded-2xl p-5 border border-card-border flex flex-col gap-4">
+              <h3 className="font-bold text-base text-white">Completed Sales</h3>
+              {receipts.length === 0 ? (
+                <div className="py-12 text-center text-gray-500 flex flex-col items-center gap-2">
+                  <History className="w-12 h-12 text-gray-700" />
+                  <p className="text-sm">No sales history yet.</p>
+                  <p className="text-xs">Your completed on-chain POS transactions will show up here.</p>
+                </div>
+              ) : (
+                <>
+                  <div className="flex flex-col gap-4 min-h-[300px] pr-1">
+                    {paginatedReceipts.map((rec) => (
+                      <div
+                        key={rec.id}
+                        className="p-4 rounded-xl bg-white/5 border border-white/5 hover:border-white/10 transition flex flex-col gap-3"
+                      >
+                        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/5 pb-2">
+                          <div>
+                            <span className="font-semibold text-xs text-white">Invoice {rec.memo}</span>
+                            <span className="text-[10px] text-gray-500 block">{new Date(rec.timestamp).toLocaleString()}</span>
+                          </div>
+                          <span className="font-mono text-xs font-bold text-[#00c853] bg-[#00c853]/10 border border-[#00c853]/20 px-2.5 py-0.5 rounded-full">
+                            +{rec.total.toFixed(2)} XLM
+                          </span>
+                        </div>
+
+                        {/* Items purchased */}
+                        <div className="flex flex-col gap-1 text-[11px] text-gray-400">
+                          {rec.items.map((item) => (
+                            <div key={item.product.id} className="flex justify-between">
+                              <span>
+                                {item.product.name} <span className="text-gray-500">x{item.quantity}</span>
+                              </span>
+                              <span className="font-mono">{(item.product.price * item.quantity).toFixed(2)} XLM</span>
+                            </div>
+                          ))}
+                        </div>
+
+                        <div className="flex justify-between items-center text-[10px] text-gray-500 border-t border-white/5 pt-2">
+                          <span>Tx: <span className="font-mono">{rec.txHash.slice(0, 10)}...</span></span>
+                          <a
+                            href={`https://stellar.expert/explorer/testnet/tx/${rec.txHash}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-[#ff7a00] hover:underline flex items-center gap-0.5 cursor-pointer"
+                          >
+                            View on explorer <ChevronRight className="w-3 h-3" />
+                          </a>
+                        </div>
                       </div>
                     ))}
                   </div>
 
-                  <div className="flex justify-between items-center text-[10px] text-gray-500 border-t border-white/5 pt-2">
-                    <span>Tx: <span className="font-mono">{rec.txHash.slice(0, 10)}...</span></span>
-                    <a
-                      href={`https://stellar.expert/explorer/testnet/tx/${rec.txHash}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-[#ff7a00] hover:underline flex items-center gap-0.5"
-                    >
-                      View on explorer <ChevronRight className="w-3 h-3" />
-                    </a>
-                  </div>
-                </div>
-              ))}
+                  {/* History Pagination Controls */}
+                  {totalHistoryPages > 1 && (
+                    <div className="flex flex-col sm:flex-row items-center justify-between gap-3 border-t border-white/5 pt-4 mt-auto">
+                      <span className="text-[10px] text-gray-500 font-medium">
+                        Showing {startHistoryIndex + 1} to {Math.min(startHistoryIndex + HISTORY_ITEMS_PER_PAGE, receipts.length)} of {receipts.length} sales
+                      </span>
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          onClick={() => setHistoryPage((prevPage) => Math.max(0, prevPage - 1))}
+                          disabled={activeHistoryPage === 0}
+                          className="px-2.5 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 border border-white/5 disabled:bg-gray-800/20 disabled:text-gray-600 disabled:border-transparent text-xs text-gray-300 font-semibold transition cursor-pointer"
+                        >
+                          Prev
+                        </button>
+                        {Array.from({ length: totalHistoryPages }).map((_, idx) => (
+                          <button
+                            key={idx}
+                            onClick={() => setHistoryPage(idx)}
+                            className={`w-7 h-7 flex items-center justify-center rounded-lg text-xs font-bold transition cursor-pointer ${
+                              activeHistoryPage === idx
+                                ? 'bg-[#ff7a00] text-white shadow-md shadow-[#ff7a00]/10'
+                                : 'bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white'
+                            }`}
+                          >
+                            {idx + 1}
+                          </button>
+                        ))}
+                        <button
+                          onClick={() => setHistoryPage((prevPage) => Math.min(totalHistoryPages - 1, prevPage + 1))}
+                          disabled={activeHistoryPage === totalHistoryPages - 1}
+                          className="px-2.5 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 border border-white/5 disabled:bg-gray-800/20 disabled:text-gray-600 disabled:border-transparent text-xs text-gray-300 font-semibold transition cursor-pointer"
+                        >
+                          Next
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
             </div>
-          )}
-        </div>
+          );
+        })()
       )}
     </div>
   );

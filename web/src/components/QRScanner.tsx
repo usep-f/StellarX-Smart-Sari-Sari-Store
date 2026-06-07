@@ -7,8 +7,9 @@ import { Camera, AlertCircle, X } from 'lucide-react';
 interface QRScannerProps {
   onScanSuccess: (decodedText: string) => void;
   placeholderText?: string;
-  manualOptions?: Array<{ value: string; label: string }>;
+  manualOptions?: Array<{ value: string; label: string; searchText?: string }>;
   manualLabel?: string;
+  manualMode?: 'select' | 'text';
 }
 
 export default function QRScanner({
@@ -16,9 +17,12 @@ export default function QRScanner({
   placeholderText = 'Align QR code inside the frame to scan',
   manualOptions = [],
   manualLabel = 'Manual Entry',
+  manualMode = 'select',
 }: QRScannerProps) {
   const [cameraActive, setCameraActive] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [manualText, setManualText] = useState('');
+  const [showSuggestions, setShowSuggestions] = useState(false);
   const scannerRef = useRef<Html5Qrcode | null>(null);
   const scannerId = 'qr-reader-element';
 
@@ -143,32 +147,113 @@ export default function QRScanner({
       )}
 
       {/* Manual Entry Fallback */}
-      {manualOptions.length > 0 && (
+      {(manualMode === 'text' || manualOptions.length > 0) && (
         <div className="border-t border-white/5 pt-3">
           <label className="flex text-xs font-medium text-gray-400 mb-1.5 items-center gap-1.5">
             {manualLabel}
           </label>
-          <div className="flex gap-2">
-            <select
-              onChange={(e) => {
-                if (e.target.value) {
-                  onScanSuccess(e.target.value);
-                  e.target.value = ''; // Reset select
-                }
-              }}
-              className="w-full bg-[#161c24] border border-card-border rounded-lg text-xs p-2 text-white outline-none focus:border-[#ff7a00] transition"
-              defaultValue=""
-            >
-              <option value="" disabled>
-                -- Select item to scan --
-              </option>
-              {manualOptions.map((opt) => (
-                <option key={opt.value} value={opt.value}>
-                  {opt.label}
+          {manualMode === 'text' ? (
+            <div className="relative">
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  const matched = manualOptions.find(
+                    (opt) =>
+                      opt.value.toLowerCase() === manualText.trim().toLowerCase() ||
+                      (opt.searchText || opt.label).toLowerCase() === manualText.trim().toLowerCase()
+                  );
+                  if (matched) {
+                    onScanSuccess(matched.value);
+                    setManualText('');
+                    setShowSuggestions(false);
+                  }
+                }}
+                className="flex gap-2"
+              >
+                <input
+                  type="text"
+                  placeholder="Type product name or scan ID..."
+                  value={manualText}
+                  onChange={(e) => {
+                    setManualText(e.target.value);
+                    setShowSuggestions(true);
+                  }}
+                  onFocus={() => setShowSuggestions(true)}
+                  className="flex-1 bg-[#161c24] border border-card-border rounded-lg text-xs p-2 text-white outline-none focus:border-[#ff7a00] transition"
+                />
+                <button
+                  type="submit"
+                  disabled={
+                    !manualOptions.some(
+                      (opt) =>
+                        opt.value.toLowerCase() === manualText.trim().toLowerCase() ||
+                        (opt.searchText || opt.label).toLowerCase() === manualText.trim().toLowerCase()
+                    )
+                  }
+                  className="bg-[#ff7a00] disabled:bg-gray-800 disabled:text-gray-500 disabled:border-transparent hover:bg-[#e06b00] text-white text-xs font-bold px-3.5 py-2 rounded-lg transition"
+                >
+                  Add
+                </button>
+              </form>
+
+              {/* Autocomplete Suggestions Dropdown */}
+              {showSuggestions && manualText.trim() && (
+                (() => {
+                  const filtered = manualOptions.filter(
+                    (opt) =>
+                      opt.value.toLowerCase().includes(manualText.toLowerCase()) ||
+                      (opt.searchText || opt.label).toLowerCase().includes(manualText.toLowerCase())
+                  );
+                  if (filtered.length === 0) return null;
+                  return (
+                    <>
+                      <div className="fixed inset-0 z-30" onClick={() => setShowSuggestions(false)} />
+                      <div className="absolute left-0 right-0 mt-1 max-h-48 overflow-y-auto bg-[#1a2130]/95 backdrop-blur-md border border-white/10 rounded-lg shadow-2xl z-40 p-1 flex flex-col gap-0.5">
+                        {filtered.map((opt) => (
+                          <button
+                            key={opt.value}
+                            type="button"
+                            onClick={() => {
+                              setManualText(opt.searchText || opt.label);
+                              setShowSuggestions(false);
+                            }}
+                            className="w-full text-left px-3 py-2 text-xs text-gray-300 hover:text-white hover:bg-white/5 rounded-md transition flex justify-between items-center"
+                          >
+                            <span className="font-semibold">{opt.searchText || opt.label}</span>
+                            <span className="text-[10px] text-gray-500 font-mono select-all">
+                              {opt.value.slice(0, 12)}...
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                    </>
+                  );
+                })()
+              )}
+            </div>
+          ) : (
+            <div className="flex gap-2">
+              <select
+                onChange={(e) => {
+                  if (e.target.value) {
+                    onScanSuccess(e.target.value);
+                    e.target.value = ''; // Reset select
+                  }
+                }}
+                className="w-full bg-[#161c24] border border-card-border rounded-lg text-xs p-2 text-white outline-none focus:border-[#ff7a00] transition"
+                defaultValue=""
+              >
+                <option value="" disabled>
+                  -- Select item to scan --
                 </option>
-              ))}
-            </select>
-          </div>
+                {manualOptions.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
         </div>
       )}
     </div>
