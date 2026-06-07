@@ -28,7 +28,7 @@ const Map = dynamic(() => import('@/components/Map'), {
 
 export default function Home() {
   const { error } = useToast();
-  const { user, profile } = useAuth();
+  const { user, profile, loading } = useAuth();
 
   // Store lists & user count states
   const [stores, setStores] = useState<Store[]>([]);
@@ -219,10 +219,18 @@ export default function Home() {
             className="flex flex-wrap justify-center gap-4 w-full sm:w-auto"
           >
             <Link
-              href={user ? (profile?.role === 'merchant' ? '/merchant' : '/customer') : '/auth'}
-              className="flex-1 sm:flex-initial bg-linear-to-r from-[#ff7a00] to-[#ffc700] hover:from-[#e06b00] hover:to-[#e0b000] text-white font-extrabold text-xs py-3.5 px-6 rounded-xl transition duration-200 flex items-center justify-center gap-1.5 shadow-lg shadow-[#ff7a00]/15 group"
+              href={user ? (loading ? '#' : (profile?.role === 'merchant' ? '/merchant' : '/customer')) : '/auth'}
+              className="flex-1 sm:flex-initial bg-linear-to-tr from-[#ff7a00] to-[#ffc700] hover:from-[#e06b00] hover:to-[#e0b000] text-white font-extrabold text-xs py-3.5 px-6 rounded-xl transition duration-200 flex items-center justify-center gap-1.5 shadow-lg shadow-[#ff7a00]/15 group"
             >
-              {user ? 'Go to Dashboard' : 'Join Us'} <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition" />
+              {loading && user ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin text-white" /> Loading...
+                </>
+              ) : (
+                <>
+                  {user ? 'Go to Dashboard' : 'Join Us'} <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition" />
+                </>
+              )}
             </Link>
           </motion.div>
 

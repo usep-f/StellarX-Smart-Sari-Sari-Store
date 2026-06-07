@@ -95,6 +95,7 @@ function ToastItem({ toast, onClose }: { toast: ToastMessage; onClose: () => voi
       exit={{ opacity: 0, scale: 0.9, y: 10 }}
       transition={{ duration: 0.25, ease: 'easeOut' }}
       className={`pointer-events-auto glass rounded-2xl p-4 border flex items-start gap-3 shadow-xl ${config.borderClass} relative overflow-hidden`}
+      style={{ backgroundColor: 'rgba(13, 18, 30, 0.9)' }}
     >
       {/* Decorative progress animation background */}
       <motion.div 

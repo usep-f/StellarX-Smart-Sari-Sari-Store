@@ -684,9 +684,18 @@ export default function PosSystem({ ownerAddress }: PosSystemProps) {
           </div>
 
           {pollingError && (
-            <div className="bg-red-500/10 border border-red-500/20 text-red-400 text-xs rounded-lg p-2.5 flex items-center gap-2">
-              <AlertCircle className="w-4 h-4" />
-              <span>{pollingError}</span>
+            <div className="bg-red-500/10 border border-red-500/20 text-red-400 text-xs rounded-lg p-2.5 flex items-center justify-between gap-2 w-full">
+              <div className="flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 shrink-0" />
+                <span>{pollingError}</span>
+              </div>
+              <button
+                onClick={() => setPollingError(null)}
+                className="text-red-400/70 hover:text-red-400 transition shrink-0"
+                aria-label="Dismiss error"
+              >
+                <X className="w-4 h-4" />
+              </button>
             </div>
           )}
 

@@ -5,8 +5,9 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { useAuth } from '@/context/AuthContext';
 import { 
-  Lock, Mail, User, Store, ArrowLeft, AlertCircle, Loader2, CheckCircle2 
+  Lock, Mail, User, Store, ArrowLeft, AlertCircle, Loader2, CheckCircle2, X
 } from 'lucide-react';
+import LoadingOverlay from '@/components/ui/LoadingOverlay';
 
 export default function AuthPage() {
   const router = useRouter();
@@ -127,16 +128,34 @@ export default function AuthPage() {
 
           {/* Error & Success Messages */}
           {error && (
-            <div className="bg-red-500/10 border border-red-500/20 text-red-400 text-xs rounded-xl p-3 flex items-start gap-2">
-              <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
-              <div>{error}</div>
+            <div className="bg-red-500/10 border border-red-500/20 text-red-400 text-xs rounded-xl p-3 flex items-start justify-between gap-2 w-full">
+              <div className="flex items-start gap-2">
+                <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                <div>{error}</div>
+              </div>
+              <button
+                onClick={() => setError(null)}
+                className="text-red-400/70 hover:text-red-400 transition shrink-0"
+                aria-label="Dismiss error"
+              >
+                <X className="w-4 h-4" />
+              </button>
             </div>
           )}
           
           {success && (
-            <div className="bg-[#00c853]/10 border border-[#00c853]/20 text-[#00c853] text-xs rounded-xl p-3 flex items-start gap-2">
-              <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5" />
-              <div>{success}</div>
+            <div className="bg-[#00c853]/10 border border-[#00c853]/20 text-[#00c853] text-xs rounded-xl p-3 flex items-start justify-between gap-2 w-full">
+              <div className="flex items-start gap-2">
+                <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5" />
+                <div>{success}</div>
+              </div>
+              <button
+                onClick={() => setSuccess(null)}
+                className="text-[#00c853]/70 hover:text-[#00c853] transition shrink-0"
+                aria-label="Dismiss message"
+              >
+                <X className="w-4 h-4" />
+              </button>
             </div>
           )}
 
@@ -297,6 +316,10 @@ export default function AuthPage() {
         </div>
 
       </div>
+      <LoadingOverlay 
+        isOpen={loading} 
+        message={isLogin ? "Signing in to your account..." : "Creating your profile on Sari-Stellar..."} 
+      />
     </main>
   );
 }

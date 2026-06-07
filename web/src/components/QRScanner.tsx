@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { Html5Qrcode } from 'html5-qrcode';
-import { Camera, AlertCircle, RefreshCw } from 'lucide-react';
+import { Camera, AlertCircle, X } from 'lucide-react';
 
 interface QRScannerProps {
   onScanSuccess: (decodedText: string) => void;
@@ -127,9 +127,18 @@ export default function QRScanner({
       </div>
 
       {errorMessage && (
-        <div className="bg-red-500/10 border border-red-500/20 text-red-400 text-xs rounded-lg p-3 flex items-start gap-2">
-          <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
-          <span>{errorMessage}</span>
+        <div className="bg-red-500/10 border border-red-500/20 text-red-400 text-xs rounded-lg p-3 flex items-start justify-between gap-2 w-full">
+          <div className="flex items-start gap-2">
+            <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+            <span>{errorMessage}</span>
+          </div>
+          <button
+            onClick={() => setErrorMessage(null)}
+            className="text-red-400/70 hover:text-red-400 transition shrink-0"
+            aria-label="Dismiss error"
+          >
+            <X className="w-4 h-4" />
+          </button>
         </div>
       )}
 

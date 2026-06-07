@@ -21,8 +21,11 @@ import PosSystem from '@/components/PosSystem';
 import ConnectWallet from '@/components/ConnectWallet';
 import { 
   Store as StoreIcon, MapPin, Navigation, Loader2, 
-  AlertCircle, Wallet, ArrowLeft, RefreshCw, LogOut, CheckCircle2 
+  AlertCircle, Wallet, ArrowLeft, RefreshCw, LogOut, CheckCircle2
 } from 'lucide-react';
+import { useToast } from '@/components/ui/Toast';
+import ConfirmationModal from '@/components/ui/ConfirmationModal';
+import LoadingOverlay from '@/components/ui/LoadingOverlay';
 
 // Dynamically import Map component (ssr: false) to prevent Next.js build errors
 const Map = dynamic(() => import('@/components/Map'), {
@@ -39,6 +42,7 @@ export default function MerchantPage() {
   const wallet = useWallet();
   const { publicKey, connect, connecting } = wallet;
   const { user, profile, loading: authLoading, logOut, linkWalletAddress } = useAuth();
+  const { error: showToastError, warning: showToastWarning } = useToast();
 
   // Store registration form state
   const [storeName, setStoreName] = useState('');
@@ -49,7 +53,22 @@ export default function MerchantPage() {
   const [registering, setRegistering] = useState(false);
   const [deregistering, setDeregistering] = useState(false);
   const [syncing, setSyncing] = useState(false);
-  const [actionError, setActionError] = useState<string | null>(null);
+
+  // Reusable confirmation modal state
+  const [confirmModal, setConfirmModal] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    confirmText?: string;
+    cancelText?: string;
+    type?: 'info' | 'warning' | 'danger';
+    onConfirm: () => void;
+  }>({
+    isOpen: false,
+    title: '',
+    message: '',
+    onConfirm: () => {},
+  });
 
   // Loaded contract data
   const [stores, setStores] = useState<Store[]>([]);
@@ -115,7 +134,7 @@ export default function MerchantPage() {
         },
         (error) => {
           console.error('Error listening to store:', error);
-          setActionError('Could not fetch store registry from Firestore.');
+          showToastError('Could not fetch store registry from Firestore.');
           setLoadingStore(false);
         }
       );
@@ -141,18 +160,32 @@ export default function MerchantPage() {
       await getBalances();
     } catch (err) {
       console.error(err);
-      alert('Friendbot funding failed.');
+      showToastError('Friendbot funding failed.');
     } finally {
       setFunding(false);
+    }
+  };
+
+  const [linkingWallet, setLinkingWallet] = useState(false);
+
+  const handleLinkWallet = async () => {
+    if (!publicKey) return;
+    setLinkingWallet(true);
+    try {
+      await linkWalletAddress(publicKey);
+    } catch (err) {
+      console.error(err);
+      showToastError('Failed to link wallet address.');
+    } finally {
+      setLinkingWallet(false);
     }
   };
 
   // Get current GPS location
   const handleGetLocation = () => {
     setGpsLoading(true);
-    setActionError(null);
     if (!navigator.geolocation) {
-      setActionError('Geolocation is not supported by your browser.');
+      showToastError('Geolocation is not supported by your browser.');
       setGpsLoading(false);
       return;
     }
@@ -168,7 +201,7 @@ export default function MerchantPage() {
         // Fallback to Quezon City
         setLat('14.6507');
         setLng('121.0506');
-        setActionError('GPS access denied or unavailable. Defaulted coordinates to Quezon City.');
+        showToastWarning('GPS access denied or unavailable. Defaulted coordinates to Quezon City.');
         setGpsLoading(false);
       },
       { timeout: 10000, maximumAge: 60000 }
@@ -224,7 +257,6 @@ export default function MerchantPage() {
     if (isNaN(latNum) || isNaN(lngNum)) return;
 
     setRegistering(true);
-    setActionError(null);
 
     try {
       // 1. Build contract call XDR
@@ -243,19 +275,16 @@ export default function MerchantPage() {
       await triggerImmediateSync();
     } catch (err: unknown) {
       console.error(err);
-      setActionError(err instanceof Error ? err.message : 'Registration failed.');
+      showToastError(err instanceof Error ? err.message : 'Registration failed.');
     } finally {
       setRegistering(false);
     }
   };
 
-  // Deregister store
-  const handleDeregister = async () => {
+  // Deregister store logic execution
+  const executeDeregister = async () => {
     if (!publicKey || !merchantStore) return;
-    if (!confirm('Are you sure you want to remove your store from the registry?')) return;
-
     setDeregistering(true);
-    setActionError(null);
 
     try {
       const xdr = await buildDeregisterStoreXDR(publicKey);
@@ -266,10 +295,24 @@ export default function MerchantPage() {
       await triggerImmediateSync();
     } catch (err: unknown) {
       console.error(err);
-      setActionError(err instanceof Error ? err.message : 'Deregistration failed.');
+      showToastError(err instanceof Error ? err.message : 'Deregistration failed.');
     } finally {
       setDeregistering(false);
     }
+  };
+
+  // Deregister store trigger
+  const handleDeregister = () => {
+    if (!publicKey || !merchantStore) return;
+    setConfirmModal({
+      isOpen: true,
+      title: 'Remove Store Profile',
+      message: 'Are you sure you want to remove your store from the decentralized registry? This action will disable POS checkouts for your clients.',
+      confirmText: 'Remove Store',
+      cancelText: 'Keep Store',
+      type: 'danger',
+      onConfirm: executeDeregister,
+    });
   };
 
   // Show loading indicator during session verification
@@ -347,15 +390,7 @@ export default function MerchantPage() {
           </div>
         </header>
 
-        {/* Action Error alerts */}
-        {actionError && (
-          <div className="bg-red-500/10 border border-red-500/20 text-red-400 text-xs rounded-xl p-4 flex items-start gap-2 max-w-2xl">
-            <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
-            <div>
-              <span className="font-bold">Error:</span> {actionError}
-            </div>
-          </div>
-        )}
+
 
         {/* Wallet Linking / Mismatch Prompts */}
         {publicKey && !profile?.linkedWallet && (
@@ -370,7 +405,7 @@ export default function MerchantPage() {
               </div>
             </div>
             <button
-              onClick={() => linkWalletAddress(publicKey)}
+              onClick={handleLinkWallet}
               className="bg-[#ff7a00] hover:bg-[#e06b00] text-white text-xs font-bold py-2 px-4 rounded-xl shrink-0 transition"
             >
               Link Connected Wallet
@@ -391,9 +426,15 @@ export default function MerchantPage() {
             </div>
             <button
               onClick={() => {
-                if (confirm("Are you sure you want to update your linked wallet? This will associate new products and sales with this wallet.")) {
-                  linkWalletAddress(publicKey);
-                }
+                setConfirmModal({
+                  isOpen: true,
+                  title: 'Update Linked Wallet Address',
+                  message: 'Are you sure you want to update your linked wallet? This will associate all your products, inventory, and new sales receipts with this new wallet address.',
+                  confirmText: 'Update Wallet',
+                  cancelText: 'Cancel',
+                  type: 'warning',
+                  onConfirm: handleLinkWallet,
+                });
               }}
               className="bg-[#ffc700] hover:bg-[#e0b000] text-[#070a0e] text-xs font-bold py-2 px-4 rounded-xl shrink-0 transition"
             >
@@ -619,6 +660,27 @@ export default function MerchantPage() {
           </>
         )}
       </div>
+      <ConfirmationModal
+        isOpen={confirmModal.isOpen}
+        title={confirmModal.title}
+        message={confirmModal.message}
+        confirmText={confirmModal.confirmText}
+        cancelText={confirmModal.cancelText}
+        type={confirmModal.type}
+        onConfirm={confirmModal.onConfirm}
+        onClose={() => setConfirmModal((prev) => ({ ...prev, isOpen: false }))}
+      />
+      <LoadingOverlay
+        isOpen={registering || deregistering || syncing || funding || linkingWallet}
+        message={
+          registering ? "Registering your store on the Soroban ledger..." :
+          deregistering ? "Removing your store from the registry..." :
+          syncing ? "Syncing your store data with the database..." :
+          funding ? "Requesting 10,000 Testnet XLM from Friendbot..." :
+          linkingWallet ? "Linking your wallet to your merchant profile..." :
+          "Processing, please wait..."
+        }
+      />
     </main>
   );
 }

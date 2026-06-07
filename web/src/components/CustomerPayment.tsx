@@ -21,6 +21,8 @@ import {
   Wallet, AlertTriangle, CheckCircle2, 
   Loader2, ArrowRight, RefreshCw, Landmark
 } from 'lucide-react';
+import { useToast } from '@/components/ui/Toast';
+import LoadingOverlay from '@/components/ui/LoadingOverlay';
 
 interface CustomerPaymentProps {
   merchantAddress: string;
@@ -45,6 +47,7 @@ export default function CustomerPayment({
   const wallet = useWallet();
   const { publicKey, connect, connecting, error: walletError } = wallet;
   const { user } = useAuth();
+  const { error: showToastError } = useToast();
 
   const [balances, setBalances] = useState<Balances | null>(null);
   const [loadingBalance, setLoadingBalance] = useState(false);
@@ -164,7 +167,7 @@ export default function CustomerPayment({
       await getBalances(publicKey);
     } catch (err: unknown) {
       console.error(err);
-      alert('Funding failed. Please try again.');
+      showToastError('Funding failed. Please try again.');
     } finally {
       setFunding(false);
     }
@@ -443,6 +446,14 @@ export default function CustomerPayment({
           </div>
         </div>
       )}
+      <LoadingOverlay
+        isOpen={paymentStatus === 'paying' || funding}
+        message={
+          funding
+            ? 'Requesting 10,000 Testnet XLM from Friendbot...'
+            : 'Signing transaction and settling payment on Stellar...'
+        }
+      />
     </div>
   );
 }
