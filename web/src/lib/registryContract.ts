@@ -2,14 +2,12 @@ import {
   Contract,
   TransactionBuilder,
   BASE_FEE,
-  Account,
   rpc,
   nativeToScVal,
-  scValToNative,
 } from '@stellar/stellar-sdk';
 import { server, NETWORK_PASSPHRASE, REGISTRY_CONTRACT_ID } from './stellar';
-
-const READ_SOURCE = 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5';
+import { collection, getDocs, doc, getDoc } from 'firebase/firestore';
+import { db } from './firebase';
 
 export interface Store {
   owner: string;
@@ -22,46 +20,44 @@ export function registryConfigured(): boolean {
   return Boolean(REGISTRY_CONTRACT_ID);
 }
 
-/** Fetch all stores from the smart contract */
+/** Fetch all stores from Firestore (populated by indexer) */
 export async function getAllStores(): Promise<Store[]> {
-  if (!registryConfigured()) return [];
-
-  const contract = new Contract(REGISTRY_CONTRACT_ID);
-  const source = new Account(READ_SOURCE, '0');
-
-  const tx = new TransactionBuilder(source, {
-    fee: BASE_FEE,
-    networkPassphrase: NETWORK_PASSPHRASE,
-  })
-    .addOperation(contract.call('get_all_stores'))
-    .setTimeout(30)
-    .build();
-
   try {
-    const sim = await server.simulateTransaction(tx);
-    if (!rpc.Api.isSimulationSuccess(sim) || !sim.result) {
-      console.error('Simulation failed for get_all_stores:', sim);
-      return [];
-    }
-
-    const rawStores = scValToNative(sim.result.retval) as Array<{
-      owner: string;
-      name: string;
-      lat: number;
-      lng: number;
-    }>;
-
-    if (!Array.isArray(rawStores)) return [];
-
-    return rawStores.map((s) => ({
-      owner: s.owner,
-      name: s.name,
-      lat: Number(s.lat) / 1000000,
-      lng: Number(s.lng) / 1000000,
-    }));
+    const storesCol = collection(db, 'stores');
+    const storeSnapshot = await getDocs(storesCol);
+    return storeSnapshot.docs.map(doc => {
+      const data = doc.data();
+      return {
+        owner: data.owner,
+        name: data.name,
+        lat: data.lat,
+        lng: data.lng,
+      } as Store;
+    });
   } catch (err) {
-    console.error('Error fetching stores from contract:', err);
+    console.error('Error fetching stores from Firestore:', err);
     return [];
+  }
+}
+
+/** Fetch a single store by owner from Firestore */
+export async function getStore(owner: string): Promise<Store | null> {
+  try {
+    const docRef = doc(db, 'stores', owner);
+    const docSnap = await getDoc(docRef);
+    if (docSnap.exists()) {
+      const data = docSnap.data();
+      return {
+        owner: data.owner,
+        name: data.name,
+        lat: data.lat,
+        lng: data.lng,
+      } as Store;
+    }
+    return null;
+  } catch (err) {
+    console.error('Error fetching store from Firestore:', err);
+    return null;
   }
 }
 

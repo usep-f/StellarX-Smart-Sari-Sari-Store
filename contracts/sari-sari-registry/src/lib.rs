@@ -1,5 +1,10 @@
 #![no_std]
-use soroban_sdk::{contract, contracterror, contractimpl, contracttype, Address, Env, String, Vec};
+use soroban_sdk::{
+    contract, contracterror, contractimpl, contracttype, Address, Env, String, Symbol,
+};
+const MAX_NAME_LENGTH: u32 = 50;
+const MIN_TTL: u32 = 17280; // ~1 day at 5s ledgers
+const EXTEND_TO: u32 = 518400; // ~30 days
 
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -12,7 +17,7 @@ pub struct Store {
 
 #[contracttype]
 pub enum DataKey {
-    Stores,
+    Store(Address),
 }
 
 #[contracterror]
@@ -41,37 +46,35 @@ impl SariSariRegistryContract {
         owner.require_auth();
 
         // Validate name length
-        if name.len() == 0 {
+        let name_len = name.len();
+        if name_len == 0 || name_len > MAX_NAME_LENGTH {
             return Err(Error::InvalidName);
         }
 
-        // Retrieve the current stores list
-        let mut stores: Vec<Store> = env
-            .storage()
-            .instance()
-            .get(&DataKey::Stores)
-            .unwrap_or_else(|| Vec::new(&env));
+        let store_key = DataKey::Store(owner.clone());
 
         // Check if this owner already registered a store
-        for i in 0..stores.len() {
-            let store = stores.get(i).unwrap();
-            if store.owner == owner {
-                return Err(Error::StoreAlreadyExists);
-            }
+        if env.storage().persistent().has(&store_key) {
+            return Err(Error::StoreAlreadyExists);
         }
 
         // Add the new store
         let new_store = Store {
             owner: owner.clone(),
-            name,
+            name: name.clone(),
             lat,
             lng,
         };
-        stores.push_back(new_store);
 
-        // Save list and extend TTL to maintain state
-        env.storage().instance().set(&DataKey::Stores, &stores);
-        env.storage().instance().extend_ttl(1000, 5000);
+        // Save entry and extend TTL to maintain state
+        env.storage().persistent().set(&store_key, &new_store);
+        env.storage()
+            .persistent()
+            .extend_ttl(&store_key, MIN_TTL, EXTEND_TO);
+
+        // Emit an event for indexers
+        env.events()
+            .publish((Symbol::new(&env, "StoreRegistered"),), new_store);
 
         Ok(())
     }
@@ -81,38 +84,35 @@ impl SariSariRegistryContract {
         // Authenticate the owner
         owner.require_auth();
 
-        // Retrieve current stores list
-        let mut stores: Vec<Store> = env
-            .storage()
-            .instance()
-            .get(&DataKey::Stores)
-            .unwrap_or_else(|| Vec::new(&env));
+        let store_key = DataKey::Store(owner.clone());
 
-        let mut index_to_remove: Option<u32> = None;
-        for i in 0..stores.len() {
-            let store = stores.get(i).unwrap();
-            if store.owner == owner {
-                index_to_remove = Some(i);
-                break;
-            }
+        if !env.storage().persistent().has(&store_key) {
+            return Err(Error::StoreDoesNotExist);
         }
 
-        if let Some(index) = index_to_remove {
-            stores.remove(index);
-            env.storage().instance().set(&DataKey::Stores, &stores);
-            env.storage().instance().extend_ttl(1000, 5000);
-            Ok(())
-        } else {
-            Err(Error::StoreDoesNotExist)
-        }
+        // Remove the store
+        env.storage().persistent().remove(&store_key);
+
+        // Emit an event for indexers (pass owner so it knows who to deregister)
+        env.events()
+            .publish((Symbol::new(&env, "StoreDeregistered"),), owner);
+
+        Ok(())
     }
 
-    /// Retrieve all registered stores.
-    pub fn get_all_stores(env: Env) -> Vec<Store> {
-        env.storage()
-            .instance()
-            .get(&DataKey::Stores)
-            .unwrap_or_else(|| Vec::new(&env))
+    /// Retrieve a single registered store by its owner.
+    pub fn get_store(env: Env, owner: Address) -> Option<Store> {
+        let store_key = DataKey::Store(owner);
+        let store: Option<Store> = env.storage().persistent().get(&store_key);
+
+        // If found, extend TTL so it doesn't expire
+        if store.is_some() {
+            env.storage()
+                .persistent()
+                .extend_ttl(&store_key, MIN_TTL, EXTEND_TO);
+        }
+
+        store
     }
 }
 

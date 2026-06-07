@@ -14,6 +14,8 @@ import {
   buildDeregisterStoreXDR, 
   Store 
 } from '@/lib/registryContract';
+import { db } from '@/lib/firebase';
+import { doc, onSnapshot } from 'firebase/firestore';
 import { signAndSubmit } from '@/lib/sign';
 import PosSystem from '@/components/PosSystem';
 import ConnectWallet from '@/components/ConnectWallet';
@@ -44,9 +46,9 @@ export default function MerchantPage() {
   const [lng, setLng] = useState('');
   const [gpsLoading, setGpsLoading] = useState(false);
   
-  // Blockchain interaction states
   const [registering, setRegistering] = useState(false);
   const [deregistering, setDeregistering] = useState(false);
+  const [syncing, setSyncing] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
 
   // Loaded contract data
@@ -65,25 +67,6 @@ export default function MerchantPage() {
     }
   }, [user, authLoading, router]);
 
-  // Load registered stores from contract
-  const loadRegistry = useCallback(async () => {
-    if (!publicKey) return;
-    setLoadingStore(true);
-    setActionError(null);
-    try {
-      const allStores = await getAllStores();
-      setStores(allStores);
-      
-      const found = allStores.find((s) => s.owner === publicKey);
-      setMerchantStore(found || null);
-    } catch (err) {
-      console.error('Failed to load store registry:', err);
-      setActionError('Could not fetch store registry from smart contract.');
-    } finally {
-      setLoadingStore(false);
-    }
-  }, [publicKey]);
-
   // Load balances
   const getBalances = useCallback(async () => {
     if (!publicKey) return;
@@ -97,14 +80,56 @@ export default function MerchantPage() {
 
   useEffect(() => {
     if (publicKey) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      loadRegistry();
-      getBalances();
+      const initStoreData = async () => {
+        setLoadingStore(true);
+        try {
+          const allStores = await getAllStores();
+          setStores(allStores);
+        } catch (err) {
+          console.error('Failed to load stores:', err);
+        }
+        
+        // Load balances safely inside async context
+        await getBalances();
+      };
+      
+      initStoreData();
+
+      // Real-time listener for the merchant's store
+      const unsubscribe = onSnapshot(
+        doc(db, 'stores', publicKey),
+        (docSnap) => {
+          if (docSnap.exists()) {
+            const data = docSnap.data();
+            setMerchantStore({
+              owner: data.owner,
+              name: data.name,
+              lat: data.lat,
+              lng: data.lng,
+            } as Store);
+            setSyncing(false); // Stop syncing if we get the store
+          } else {
+            setMerchantStore(null);
+          }
+          setLoadingStore(false);
+        },
+        (error) => {
+          console.error('Error listening to store:', error);
+          setActionError('Could not fetch store registry from Firestore.');
+          setLoadingStore(false);
+        }
+      );
+
+      return () => unsubscribe();
     } else {
-      setMerchantStore(null);
-      setBalances(null);
+      const clearState = async () => {
+        setMerchantStore(null);
+        setBalances(null);
+        setStores([]);
+      };
+      clearState();
     }
-  }, [publicKey, loadRegistry, getBalances]);
+  }, [publicKey, getBalances]);
 
   // Fund wallet via Friendbot
   const handleFund = async () => {
@@ -175,8 +200,8 @@ export default function MerchantPage() {
       // 2. Sign, submit, and poll using Freighter
       await signAndSubmit(xdr, publicKey);
       
-      // 3. Reload registry
-      await loadRegistry();
+      // 3. UI will update automatically via onSnapshot once the indexer picks it up
+      setSyncing(true);
       setStoreName('');
       setLat('');
       setLng('');
@@ -199,7 +224,7 @@ export default function MerchantPage() {
     try {
       const xdr = await buildDeregisterStoreXDR(publicKey);
       await signAndSubmit(xdr, publicKey);
-      await loadRegistry();
+      // UI will update automatically via onSnapshot
     } catch (err: unknown) {
       console.error(err);
       setActionError(err instanceof Error ? err.message : 'Deregistration failed.');
@@ -370,7 +395,15 @@ export default function MerchantPage() {
         {publicKey && !loadingStore && (
           <>
             {/* Store PROFILE / REGISTRATION PANEL */}
-            {!merchantStore ? (
+            {syncing && !merchantStore ? (
+              <div className="py-24 text-center text-gray-400 flex flex-col items-center justify-center gap-3 glass rounded-3xl border border-card-border">
+                <Loader2 className="w-10 h-10 animate-spin text-[#ff7a00]" />
+                <h2 className="text-lg font-bold text-white mt-2">Syncing your store...</h2>
+                <p className="text-sm max-w-sm">
+                  Your store has been successfully registered on the Stellar blockchain. We are waiting for the indexer to sync your data. This can take up to 1 minute.
+                </p>
+              </div>
+            ) : !merchantStore ? (
               // Store Registration Form
               <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
                 

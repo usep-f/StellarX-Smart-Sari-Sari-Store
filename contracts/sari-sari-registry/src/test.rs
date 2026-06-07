@@ -9,7 +9,7 @@ fn setup(env: &Env) -> SariSariRegistryContractClient<'_> {
 }
 
 #[test]
-fn test_register_and_get_all() {
+fn test_register_and_get() {
     let env = Env::default();
     env.mock_all_auths();
     let client = setup(&env);
@@ -18,16 +18,13 @@ fn test_register_and_get_all() {
     let store_name = String::from_str(&env, "Ate Joy's Store");
     
     // Check initial state is empty
-    assert_eq!(client.get_all_stores().len(), 0);
+    assert!(client.get_store(&owner).is_none());
 
     // Register store
     client.register_store(&owner, &store_name, &14599500, &121060900);
 
-    // Verify list contains registered store
-    let stores = client.get_all_stores();
-    assert_eq!(stores.len(), 1);
-    
-    let store = stores.get(0).unwrap();
+    // Verify store exists
+    let store = client.get_store(&owner).unwrap();
     assert_eq!(store.owner, owner);
     assert_eq!(store.name, store_name);
     assert_eq!(store.lat, 14599500);
@@ -65,19 +62,19 @@ fn test_deregister() {
     client.register_store(&owner1, &name1, &1000, &2000);
     client.register_store(&owner2, &name2, &3000, &4000);
 
-    assert_eq!(client.get_all_stores().len(), 2);
+    assert!(client.get_store(&owner1).is_some());
+    assert!(client.get_store(&owner2).is_some());
 
     // Deregister owner 1
     client.deregister_store(&owner1);
 
-    // Verify only owner 2 remains
-    let stores = client.get_all_stores();
-    assert_eq!(stores.len(), 1);
-    assert_eq!(stores.get(0).unwrap().owner, owner2);
+    // Verify owner 1 is gone but owner 2 remains
+    assert!(client.get_store(&owner1).is_none());
+    assert!(client.get_store(&owner2).is_some());
 
     // Deregister owner 2
     client.deregister_store(&owner2);
-    assert_eq!(client.get_all_stores().len(), 0);
+    assert!(client.get_store(&owner2).is_none());
 }
 
 #[test]
@@ -102,4 +99,9 @@ fn test_invalid_name() {
 
     let result = client.try_register_store(&owner, &empty_name, &1000, &2000);
     assert_eq!(result, Err(Ok(Error::InvalidName)));
+
+    // Test too long name (51 chars)
+    let too_long_name = String::from_str(&env, "This is a store name that is definitely over fifty characters long");
+    let result2 = client.try_register_store(&owner, &too_long_name, &1000, &2000);
+    assert_eq!(result2, Err(Ok(Error::InvalidName)));
 }
