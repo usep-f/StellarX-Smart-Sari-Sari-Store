@@ -33,8 +33,8 @@ service cloud.firestore {
       allow update, delete: if request.auth != null && resource.data.uid == request.auth.uid;
     }
     
-    // Stores: Publicly readable for map discovery. Writes are done exclusively by the Cloud Function indexer.
-    match /stores/{storeId} {
+    // Stores: Publicly readable for map discovery via collectionGroup. Writes are done exclusively by the Cloud Function indexer.
+    match /{path=**}/stores/{storeId} {
       allow read: if true;
       allow write: if false;
     }

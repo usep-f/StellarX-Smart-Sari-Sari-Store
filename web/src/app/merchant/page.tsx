@@ -14,7 +14,8 @@ import {
   buildDeregisterStoreXDR, 
   Store 
 } from '@/lib/registryContract';
-import { db } from '@/lib/firebase';
+import { db, functions } from '@/lib/firebase';
+import { httpsCallable } from 'firebase/functions';
 import { signAndSubmit } from '@/lib/sign';
 import PosSystem from '@/components/PosSystem';
 import ConnectWallet from '@/components/ConnectWallet';
@@ -51,6 +52,7 @@ export default function MerchantPage() {
   const [registering, setRegistering] = useState(false);
   const [deregistering, setDeregistering] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  const [isOptimistic, setIsOptimistic] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
 
   // Loaded contract data
@@ -113,8 +115,18 @@ export default function MerchantPage() {
               lng: data.lng,
             } as Store);
             setSyncing(false);
+            setIsOptimistic(false);
+            localStorage.removeItem(`optimistic_store_${publicKey}`);
           } else {
-            setMerchantStore(null);
+            // Check if there is an optimistic store in localStorage
+            const localStoreStr = localStorage.getItem(`optimistic_store_${publicKey}`);
+            if (localStoreStr) {
+              setMerchantStore(JSON.parse(localStoreStr) as Store);
+              setIsOptimistic(true);
+            } else {
+              setMerchantStore(null);
+              setIsOptimistic(false);
+            }
           }
           setLoadingStore(false);
         },
@@ -214,17 +226,63 @@ export default function MerchantPage() {
       const xdr = await buildRegisterStoreXDR(publicKey, managerArg, storeName.trim(), latNum, lngNum);
       
       // 2. Sign, submit, and poll using Freighter
-      await signAndSubmit(xdr, publicKey);
+      const txHash = await signAndSubmit(xdr, publicKey);
       
-      // 3. UI will update automatically via onSnapshot once the indexer picks it up
+      // 3. Trigger Callable Cloud Function to index immediately
       setSyncing(true);
+      try {
+        const syncStoreTx = httpsCallable(functions, 'syncStoreTx');
+        await syncStoreTx({ txHash });
+        
+        // Remove any optimistic state as real data is now in Firestore
+        localStorage.removeItem(`optimistic_store_${publicKey}`);
+        setIsOptimistic(false);
+      } catch (syncErr) {
+         console.error('Fast sync failed, falling back to optimistic UI', syncErr);
+         const optimisticStore: Store = {
+           owner: publicKey,
+           manager: managerArg,
+           name: storeName.trim(),
+           lat: latNum,
+           lng: lngNum,
+         };
+         localStorage.setItem(`optimistic_store_${publicKey}`, JSON.stringify(optimisticStore));
+         setMerchantStore(optimisticStore);
+         setIsOptimistic(true);
+      } finally {
+        setSyncing(false);
+      }
+      
       setStoreName('');
       setManagerAddress('');
       setLat('');
       setLng('');
     } catch (err: unknown) {
       console.error(err);
-      setActionError(err instanceof Error ? err.message : 'Registration failed.');
+      const errMsg = err instanceof Error ? err.message : 'Registration failed.';
+      
+      // Fallback: If they have already registered a store on-chain but it hasn't indexed yet
+      if (errMsg.includes('already registered')) {
+        const managerArg = managerAddress.trim() || publicKey;
+        const optimisticStore: Store = {
+          owner: publicKey,
+          manager: managerArg,
+          name: storeName.trim() || 'My Sari-Sari Store',
+          lat: latNum,
+          lng: lngNum,
+        };
+        localStorage.setItem(`optimistic_store_${publicKey}`, JSON.stringify(optimisticStore));
+        setMerchantStore(optimisticStore);
+        setIsOptimistic(true);
+        setActionError(null);
+        
+        setStoreName('');
+        setManagerAddress('');
+        setLat('');
+        setLng('');
+      } else {
+        setActionError(errMsg);
+      }
     } finally {
       setRegistering(false);
     }
@@ -240,7 +298,21 @@ export default function MerchantPage() {
 
     try {
       const xdr = await buildDeregisterStoreXDR(publicKey);
-      await signAndSubmit(xdr, publicKey);
+      const txHash = await signAndSubmit(xdr, publicKey);
+      
+      setSyncing(true);
+      try {
+        const syncStoreTx = httpsCallable(functions, 'syncStoreTx');
+        await syncStoreTx({ txHash });
+      } catch (syncErr) {
+        console.error('Fast sync failed during deregistration:', syncErr);
+      } finally {
+        setSyncing(false);
+      }
+      
+      // Clear optimistic cache and state
+      localStorage.removeItem(`optimistic_store_${publicKey}`);
+      setIsOptimistic(false);
       // UI will update automatically via onSnapshot
     } catch (err: unknown) {
       console.error(err);
@@ -631,6 +703,18 @@ export default function MerchantPage() {
                     )}
                   </button>
                 </div>
+
+                {isOptimistic && (
+                  <div className="bg-[#ffc700]/10 border border-[#ffc700]/25 rounded-2xl p-4 flex gap-3 items-center">
+                    <RefreshCw className="w-5 h-5 text-[#ffc700] shrink-0 animate-spin" />
+                    <div>
+                      <h4 className="text-xs font-bold text-white">Registry Syncing in Background</h4>
+                      <p className="text-[11px] text-gray-400 mt-0.5 leading-relaxed">
+                        Your store has been successfully registered on the Stellar blockchain. Your POS system is fully functional, and your store profile will appear on the interactive map once the indexer updates (usually under 1 minute).
+                      </p>
+                    </div>
+                  </div>
+                )}
 
                 {/* Render Point of Sale components */}
                 <PosSystem ownerAddress={publicKey} />
