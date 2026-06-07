@@ -181,6 +181,39 @@ export default function MerchantPage() {
     setLng(clickLng.toFixed(6));
   };
 
+  // Trigger immediate on-demand store sync via cloud function
+  const triggerImmediateSync = useCallback(async () => {
+    if (!user) return;
+    try {
+      const token = await user.getIdToken();
+      const projectId = process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID || 'saristellarx';
+      const region = 'asia-southeast1';
+      
+      const useEmulator = process.env.NEXT_PUBLIC_USE_FUNCTIONS_EMULATOR === 'true';
+      const url = useEmulator
+        ? `http://127.0.0.1:5001/${projectId}/${region}/syncStoreOnDemand`
+        : `https://${region}-${projectId}.cloudfunctions.net/syncStoreOnDemand`;
+
+      console.log('Triggering immediate store sync at:', url);
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        }
+      });
+      
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        console.warn('Immediate sync response error:', errData);
+      } else {
+        console.log('Immediate store sync triggered successfully.');
+      }
+    } catch (err) {
+      console.warn('Failed to trigger immediate sync (this is normal if the local Firebase Functions emulator is not running):', err);
+    }
+  }, [user]);
+
   // Submit store registration to Soroban contract
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -205,6 +238,9 @@ export default function MerchantPage() {
       setStoreName('');
       setLat('');
       setLng('');
+
+      // 4. Trigger immediate on-demand sync
+      await triggerImmediateSync();
     } catch (err: unknown) {
       console.error(err);
       setActionError(err instanceof Error ? err.message : 'Registration failed.');
@@ -225,6 +261,9 @@ export default function MerchantPage() {
       const xdr = await buildDeregisterStoreXDR(publicKey);
       await signAndSubmit(xdr, publicKey);
       // UI will update automatically via onSnapshot
+      
+      // Trigger immediate on-demand sync
+      await triggerImmediateSync();
     } catch (err: unknown) {
       console.error(err);
       setActionError(err instanceof Error ? err.message : 'Deregistration failed.');
