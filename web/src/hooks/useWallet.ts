@@ -1,15 +1,6 @@
 'use client';
 import { useState, useCallback, useEffect } from 'react';
-
-const TIMEOUT_MS = 3000;
-
-// Freighter API calls can hang if the extension is missing — race them with a timeout.
-function withTimeout<T>(p: Promise<T>, fallback: T, ms = TIMEOUT_MS): Promise<T> {
-  return Promise.race([
-    p,
-    new Promise<T>((resolve) => setTimeout(() => resolve(fallback), ms)),
-  ]);
-}
+import { getKit } from '@/lib/wallet';
 
 export interface WalletState {
   publicKey: string | null;
@@ -17,6 +8,7 @@ export interface WalletState {
   error: string | null;
   connect: () => void;
   disconnect: () => void;
+  signTransaction: (xdr: string) => Promise<string>;
 }
 
 export function useWallet(): WalletState {
@@ -26,38 +18,29 @@ export function useWallet(): WalletState {
 
   // Restore session from localStorage
   useEffect(() => {
-    const stored = localStorage.getItem('sari_wallet_pubkey');
-    if (stored) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setPublicKey(stored);
-    }
+    const stored = localStorage.getItem('activeWallet');
+    const timerId = setTimeout(() => {
+      if (stored) {
+        setPublicKey(stored);
+      }
+    }, 0);
+    return () => clearTimeout(timerId);
   }, []);
 
   const connect = useCallback(async () => {
     setConnecting(true);
     setError(null);
     try {
-      // Dynamic import only — a static import breaks SSR (browser globals).
-      const freighter = await import('@stellar/freighter-api');
+      const kit = getKit();
+      if (!kit) throw new Error('Wallet kit not initialized');
 
-      const connected = await withTimeout(freighter.isConnected(), {
-        isConnected: false,
-      });
-      if (!connected.isConnected) {
-        throw new Error(
-          'Freighter not detected. Install it from freighter.app and reload.',
-        );
-      }
-
-      // requestAccess() prompts the user and returns their address (Freighter v6).
-      const access = await freighter.requestAccess();
-      if (access.error) throw new Error(access.error);
-      if (!access.address) {
+      const { address } = await kit.authModal();
+      if (!address) {
         throw new Error('No address returned — did you approve the request?');
       }
 
-      setPublicKey(access.address);
-      localStorage.setItem('sari_wallet_pubkey', access.address);
+      setPublicKey(address);
+      localStorage.setItem('activeWallet', address);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Failed to connect wallet');
     } finally {
@@ -68,8 +51,17 @@ export function useWallet(): WalletState {
   const disconnect = useCallback(() => {
     setPublicKey(null);
     setError(null);
-    localStorage.removeItem('sari_wallet_pubkey');
+    localStorage.removeItem('activeWallet');
   }, []);
 
-  return { publicKey, connecting, error, connect, disconnect };
+  const signTransaction = useCallback(async (xdr: string) => {
+    const kit = getKit();
+    if (!kit) throw new Error('Wallet kit not initialized');
+    const { signedTxXdr } = await kit.signTransaction(xdr, {
+      networkPassphrase: 'Test SDF Network ; September 2015',
+    });
+    return signedTxXdr;
+  }, []);
+
+  return { publicKey, connecting, error, connect, disconnect, signTransaction };
 }

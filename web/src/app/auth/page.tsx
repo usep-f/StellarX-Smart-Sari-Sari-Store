@@ -4,17 +4,15 @@ import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { useAuth } from '@/context/AuthContext';
-import { useWallet } from '@/hooks/useWallet';
 import { 
-  Wallet, User, Store, ArrowLeft, AlertCircle, Loader2, CheckCircle2, X
+  Wallet, User as UserIcon, Store, ArrowLeft, AlertCircle, Loader2, CheckCircle2, X
 } from 'lucide-react';
 import LoadingOverlay from '@/components/ui/LoadingOverlay';
 import { useToast } from '@/components/ui/Toast';
 
 export default function AuthPage() {
   const router = useRouter();
-  const { user, profile, signInWithWallet, createWalletProfile, loading: authLoading } = useAuth();
-  const { publicKey, connect, connecting, error: walletError, disconnect } = useWallet();
+  const { user, profile, signInWithWallet, createWalletProfile, loading: authLoading, logOut } = useAuth();
   const { error: showToastError } = useToast();
   
   // Login / Onboarding Page state
@@ -36,8 +34,10 @@ export default function AuthPage() {
       }
     } else if (user && !profile && !authLoading) {
       // User is logged in but doesn't have a profile document, trigger onboarding
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setIsOnboarding(true);
+      const timerId = setTimeout(() => {
+        setIsOnboarding(true);
+      }, 0);
+      return () => clearTimeout(timerId);
     }
   }, [user, profile, authLoading, router]);
 
@@ -45,15 +45,9 @@ export default function AuthPage() {
   const handleWalletLogin = async () => {
     setError(null);
     setSuccess(null);
-
-    if (!publicKey) {
-      connect();
-      return;
-    }
-
     setLoading(true);
     try {
-      const { isNew } = await signInWithWallet(publicKey);
+      const { isNew } = await signInWithWallet();
       if (isNew) {
         setSuccess('Wallet authenticated! Please configure your profile details.');
         setIsOnboarding(true);
@@ -62,7 +56,7 @@ export default function AuthPage() {
       }
     } catch (err: unknown) {
       console.error(err);
-      setError(err instanceof Error ? err.message : 'Freighter wallet authentication failed.');
+      setError(err instanceof Error ? err.message : 'Wallet authentication failed.');
       showToastError(err instanceof Error ? err.message : 'Authentication failed.');
     } finally {
       setLoading(false);
@@ -134,11 +128,11 @@ export default function AuthPage() {
           </div>
 
           {/* Error & Success Messages */}
-          {(error || walletError) && (
+          {error && (
             <div className="bg-red-500/10 border border-red-500/20 text-red-400 text-xs rounded-xl p-3 flex items-start justify-between gap-2 w-full">
               <div className="flex items-start gap-2">
                 <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
-                <div>{error || walletError}</div>
+                <div>{error}</div>
               </div>
               <button
                 onClick={() => setError(null)}
@@ -181,7 +175,7 @@ export default function AuthPage() {
                 </div>
               </div>
 
-              {publicKey ? (
+              {user?.uid ? (
                 <div className="flex flex-col gap-2">
                   <button
                     onClick={handleWalletLogin}
@@ -194,13 +188,13 @@ export default function AuthPage() {
                       </>
                     ) : (
                       <>
-                        <Wallet className="w-4 h-4" /> Sign In with Freighter ({formatAddress(publicKey)})
+                        <Wallet className="w-4 h-4" /> Re-authenticate ({formatAddress(user.uid)})
                       </>
                     )}
                   </button>
                   <button
                     type="button"
-                    onClick={disconnect}
+                    onClick={logOut}
                     disabled={loading}
                     className="text-xs text-gray-500 hover:text-white transition hover:underline mt-1 cursor-pointer"
                   >
@@ -209,21 +203,23 @@ export default function AuthPage() {
                 </div>
               ) : (
                 <button
-                  onClick={connect}
-                  disabled={connecting}
+                  onClick={handleWalletLogin}
+                  disabled={loading}
                   className="w-full bg-white/5 hover:bg-white/10 text-white font-bold py-3.5 px-4 rounded-xl border border-white/10 transition flex items-center justify-center gap-1.5 text-xs cursor-pointer"
                 >
-                  {connecting ? (
+                  {loading ? (
                     <>
-                      <Loader2 className="w-4 h-4 animate-spin" /> Connecting Freighter...
+                      <Loader2 className="w-4 h-4 animate-spin" /> Connecting Wallet...
                     </>
                   ) : (
                     <>
-                      <Wallet className="w-4 h-4 text-[#00f0ff]" /> Connect Freighter Wallet
+                      <Wallet className="w-4 h-4 text-[#00f0ff]" /> Connect Stellar Wallet
                     </>
                   )}
                 </button>
               )}
+
+
             </div>
           ) : (
             // Onboarding Form for new wallets
@@ -243,7 +239,7 @@ export default function AuthPage() {
                     }`}
                     disabled={loading}
                   >
-                    <User className={`w-5 h-5 ${role === 'customer' ? 'text-[#00c853]' : ''}`} />
+                    <UserIcon className={`w-5 h-5 ${role === 'customer' ? 'text-[#00c853]' : ''}`} />
                     <span className="text-xs font-bold">Customer</span>
                   </button>
                   
@@ -267,7 +263,7 @@ export default function AuthPage() {
               <div className="flex flex-col gap-1">
                 <label className="text-[11px] text-gray-400 font-medium">Display Name / Full Name</label>
                 <div className="relative">
-                  <User className="absolute left-3.5 top-3.5 w-4 h-4 text-gray-500" />
+                  <UserIcon className="absolute left-3.5 top-3.5 w-4 h-4 text-gray-500" />
                   <input
                     type="text"
                     placeholder="Enter your name"
@@ -283,7 +279,7 @@ export default function AuthPage() {
               <div className="flex flex-col gap-1.5 mt-1">
                 <label className="text-[11px] text-gray-400 font-medium">Stellar Public Key</label>
                 <div className="bg-[#161c24]/50 border border-white/5 rounded-xl p-3 font-mono text-[10px] text-gray-500 break-all select-all">
-                  {publicKey || user?.uid}
+                  {user?.uid}
                 </div>
               </div>
 

@@ -204,7 +204,6 @@ export default function MerchantPage() {
   const triggerImmediateSync = useCallback(async () => {
     if (!user) return;
     try {
-      const token = await user.getIdToken();
       const projectId = process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID || 'saristellarx';
       const region = 'asia-southeast1';
       
@@ -217,7 +216,6 @@ export default function MerchantPage() {
       const res = await fetch(url, {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json'
         }
       });
@@ -249,7 +247,7 @@ export default function MerchantPage() {
       const xdr = await buildRegisterStoreXDR(publicKey, storeName.trim(), latNum, lngNum);
       
       // 2. Sign, submit, and poll using Freighter
-      await signAndSubmit(xdr, publicKey);
+      await signAndSubmit(xdr);
       
       // 3. UI will update automatically via onSnapshot once the indexer picks it up
       setSyncing(true);
@@ -274,7 +272,7 @@ export default function MerchantPage() {
 
     try {
       const xdr = await buildDeregisterStoreXDR(publicKey);
-      await signAndSubmit(xdr, publicKey);
+      await signAndSubmit(xdr);
       // UI will update automatically via onSnapshot
       
       // Trigger immediate on-demand sync

@@ -68,7 +68,7 @@ interface PosSystemProps {
 export default function PosSystem({ ownerAddress }: PosSystemProps) {
   const { user } = useAuth();
   const { warning: showToastWarning, success: showToastSuccess, error: showToastError } = useToast();
-  const { rate: xlmRate, loading: loadingRate, error: rateError, lastUpdated: rateLastUpdated, refetch: refetchRate } = useXlmPrice();
+  const { rate: xlmRate, loading: loadingRate, error: rateError, refetch: refetchRate } = useXlmPrice();
   const [activeTab, setActiveTab] = useState<'pos' | 'inventory' | 'history'>('pos');
   const [products, setProducts] = useState<Product[]>([]);
   const [cart, setCart] = useState<CartItem[]>([]);

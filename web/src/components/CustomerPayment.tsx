@@ -52,7 +52,7 @@ export default function CustomerPayment({
   const { publicKey, connect, connecting, error: walletError } = wallet;
   const { user } = useAuth();
   const { error: showToastError } = useToast();
-  const { rate: xlmRate, loading: loadingRate, error: rateError, lastUpdated: rateLastUpdated, refetch: refetchRate } = useXlmPrice();
+  const { rate: xlmRate, loading: loadingRate, error: rateError, refetch: refetchRate } = useXlmPrice();
 
   const [balances, setBalances] = useState<Balances | null>(null);
   const [loadingBalance, setLoadingBalance] = useState(false);
@@ -209,7 +209,7 @@ export default function CustomerPayment({
       );
 
       // 2. Sign, submit, and poll using Freighter
-      const hash = await signAndSubmit(xdr, publicKey);
+      const hash = await signAndSubmit(xdr);
       setTxHash(hash);
       setPaymentStatus('success');
 

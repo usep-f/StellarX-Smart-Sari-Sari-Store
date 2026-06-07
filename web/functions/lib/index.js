@@ -1,13 +1,13 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.verifyAuthChallenge = exports.getAuthChallenge = exports.syncStoreOnDemand = exports.syncStores = void 0;
+exports.secureDeleteAccount = exports.secureWriteProfile = exports.syncStoreOnDemand = exports.syncStores = void 0;
 const scheduler_1 = require("firebase-functions/v2/scheduler");
 const https_1 = require("firebase-functions/v2/https");
 const v2_1 = require("firebase-functions/v2");
 const app_1 = require("firebase-admin/app");
 const firestore_1 = require("firebase-admin/firestore");
-const auth_1 = require("firebase-admin/auth");
 const stellar_sdk_1 = require("@stellar/stellar-sdk");
+const crypto_1 = require("crypto");
 (0, app_1.initializeApp)();
 const db = (0, firestore_1.getFirestore)();
 // Set global region to Singapore (south-east asia 1)
@@ -161,21 +161,6 @@ exports.syncStoreOnDemand = (0, https_1.onRequest)(async (req, res) => {
         return;
     }
     try {
-        // Authenticate the user calling the endpoint
-        const authHeader = req.headers.authorization;
-        if (!authHeader || !authHeader.startsWith('Bearer ')) {
-            res.status(401).json({ error: 'Unauthorized: Missing or invalid Authorization header' });
-            return;
-        }
-        const token = authHeader.split('Bearer ')[1];
-        try {
-            await (0, auth_1.getAuth)().verifyIdToken(token);
-        }
-        catch (authError) {
-            console.error('Auth token verification failed:', authError);
-            res.status(401).json({ error: 'Unauthorized: Invalid ID token' });
-            return;
-        }
         // Trigger sync
         await performStoreSync();
         res.status(200).json({ success: true, message: 'Sync complete' });
@@ -186,90 +171,30 @@ exports.syncStoreOnDemand = (0, https_1.onRequest)(async (req, res) => {
     }
 });
 /**
- * Endpoint to generate a random challenge nonce and wrap it in an unsigned mock transaction XDR
+ * Helper to verify a signed payload using Stellar transaction memo hash
  */
-exports.getAuthChallenge = (0, https_1.onRequest)(async (req, res) => {
-    // Handle CORS
-    res.set('Access-Control-Allow-Origin', '*');
-    if (req.method === 'OPTIONS') {
-        res.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-        res.set('Access-Control-Allow-Headers', 'Content-Type');
-        res.status(204).send('');
-        return;
-    }
+function verifyPayloadSignature(payload, signedXdr) {
     try {
-        const { walletAddress } = req.body;
-        if (!walletAddress) {
-            res.status(400).json({ error: 'Missing walletAddress' });
-            return;
-        }
-        // 1. Generate challenge nonce
-        const nonce = Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
-        const expiresAt = Date.now() + 5 * 60 * 1000; // 5 minutes
-        // 2. Save challenge in Firestore
-        await db.doc(`challenges/${walletAddress}`).set({
-            nonce,
-            expiresAt,
-        });
-        // 3. Build offline unsigned Stellar Transaction
-        const account = new stellar_sdk_1.Account(walletAddress, '0');
-        const tx = new stellar_sdk_1.TransactionBuilder(account, {
-            fee: '100',
-            networkPassphrase: 'Test SDF Network ; September 2015',
-        })
-            .addMemo(stellar_sdk_1.Memo.text(nonce))
-            .addOperation(stellar_sdk_1.Operation.bumpSequence({ bumpTo: '1' }))
-            .setTimeout(300) // 5 minutes
-            .build();
-        const unsignedXdr = tx.toXDR();
-        res.status(200).json({ success: true, nonce, unsignedXdr });
-    }
-    catch (error) {
-        console.error('Error generating challenge:', error);
-        res.status(500).json({ error: 'Internal Server Error' });
-    }
-});
-/**
- * Endpoint to verify signed XDR challenge and issue a Firebase Custom Auth token
- */
-exports.verifyAuthChallenge = (0, https_1.onRequest)(async (req, res) => {
-    var _a;
-    // Handle CORS
-    res.set('Access-Control-Allow-Origin', '*');
-    if (req.method === 'OPTIONS') {
-        res.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-        res.set('Access-Control-Allow-Headers', 'Content-Type');
-        res.status(204).send('');
-        return;
-    }
-    try {
-        const { signedXdr, walletAddress } = req.body;
-        if (!signedXdr || !walletAddress) {
-            res.status(400).json({ error: 'Missing signedXdr or walletAddress' });
-            return;
-        }
-        // 1. Retrieve the stored challenge
-        const challengeRef = db.doc(`challenges/${walletAddress}`);
-        const challengeSnap = await challengeRef.get();
-        if (!challengeSnap.exists) {
-            res.status(400).json({ error: 'Challenge not found. Please request login again.' });
-            return;
-        }
-        const { nonce, expiresAt } = challengeSnap.data();
-        if (Date.now() > expiresAt) {
-            await challengeRef.delete();
-            res.status(400).json({ error: 'Challenge expired. Please request login again.' });
-            return;
-        }
-        // 2. Decode the transaction and check parameters
+        const payloadStr = JSON.stringify(payload);
+        const hash = (0, crypto_1.createHash)('sha256').update(payloadStr).digest();
         const tx = stellar_sdk_1.TransactionBuilder.fromXDR(signedXdr, 'Test SDF Network ; September 2015');
-        // 3. Verify memo contains the correct nonce
-        const txMemo = (_a = tx.memo.value) === null || _a === void 0 ? void 0 : _a.toString();
-        if (txMemo !== nonce) {
-            res.status(400).json({ error: 'Invalid challenge memo.' });
-            return;
+        // Check timestamp to prevent old replay attacks (5 minute window)
+        if (!payload.timestamp || Date.now() - payload.timestamp > 5 * 60 * 1000) {
+            console.error('Payload timestamp expired or missing');
+            return false;
         }
-        // 4. Verify transaction signature
+        // Verify memo matches payload hash
+        if (tx.memo.type !== 'hash') {
+            console.error('Memo type is not hash');
+            return false;
+        }
+        const txMemoHash = tx.memo.value;
+        if (!txMemoHash.equals(hash)) {
+            console.error('Memo hash does not match payload hash');
+            return false;
+        }
+        // Verify signature
+        const walletAddress = payload.walletAddress;
         const keypair = stellar_sdk_1.Keypair.fromPublicKey(walletAddress);
         let verified = false;
         for (const sig of tx.signatures) {
@@ -278,23 +203,128 @@ exports.verifyAuthChallenge = (0, https_1.onRequest)(async (req, res) => {
                 break;
             }
         }
-        if (!verified) {
-            res.status(400).json({ error: 'Invalid signature for this wallet address.' });
+        return verified;
+    }
+    catch (err) {
+        console.error('Signature verification error:', err);
+        return false;
+    }
+}
+/**
+ * Endpoint to securely write a user profile without Firebase Auth
+ */
+exports.secureWriteProfile = (0, https_1.onRequest)(async (req, res) => {
+    var _a;
+    res.set('Access-Control-Allow-Origin', '*');
+    if (req.method === 'OPTIONS') {
+        res.set('Access-Control-Allow-Methods', 'POST, OPTIONS');
+        res.set('Access-Control-Allow-Headers', 'Content-Type');
+        res.status(204).send('');
+        return;
+    }
+    try {
+        const { payload, signedXdr } = req.body;
+        if (!payload || !signedXdr) {
+            res.status(400).json({ error: 'Missing payload or signedXdr' });
             return;
         }
-        // 5. Cleanup challenge
-        await challengeRef.delete();
-        // 6. Create custom token
-        const customToken = await (0, auth_1.getAuth)().createCustomToken(walletAddress);
-        res.status(200).json({ success: true, customToken });
+        if (!verifyPayloadSignature(payload, signedXdr)) {
+            res.status(401).json({ error: 'Invalid signature or expired payload' });
+            return;
+        }
+        const { walletAddress, action, data } = payload;
+        if (action !== 'createProfile' && action !== 'updateProfile') {
+            res.status(400).json({ error: 'Invalid action' });
+            return;
+        }
+        const userDocRef = db.doc(`users/${walletAddress}`);
+        if (action === 'createProfile') {
+            const userProfile = {
+                email: null,
+                role: data.role,
+                fullName: data.fullName,
+                linkedWallet: walletAddress,
+                createdAt: Date.now(),
+            };
+            await userDocRef.set(userProfile);
+        }
+        else if (action === 'updateProfile') {
+            await userDocRef.update({ fullName: data.fullName });
+            // If merchant, sync ownerName to store
+            const userSnap = await userDocRef.get();
+            if (userSnap.exists && ((_a = userSnap.data()) === null || _a === void 0 ? void 0 : _a.role) === 'merchant') {
+                const storeDocRef = db.doc(`stores/${walletAddress}`);
+                const storeSnap = await storeDocRef.get();
+                if (storeSnap.exists) {
+                    await storeDocRef.update({ ownerName: data.fullName });
+                }
+            }
+        }
+        res.status(200).json({ success: true });
     }
     catch (error) {
-        console.error('Error verifying challenge:', error);
-        res.status(500).json({
-            error: 'Internal Server Error',
-            details: error instanceof Error ? error.message : String(error),
-            stack: error instanceof Error ? error.stack : undefined
-        });
+        console.error('Error in secureWriteProfile:', error);
+        res.status(500).json({ error: 'Internal Server Error' });
+    }
+});
+/**
+ * Endpoint to securely delete a user account without Firebase Auth
+ */
+exports.secureDeleteAccount = (0, https_1.onRequest)(async (req, res) => {
+    res.set('Access-Control-Allow-Origin', '*');
+    if (req.method === 'OPTIONS') {
+        res.set('Access-Control-Allow-Methods', 'POST, OPTIONS');
+        res.set('Access-Control-Allow-Headers', 'Content-Type');
+        res.status(204).send('');
+        return;
+    }
+    try {
+        const { payload, signedXdr } = req.body;
+        if (!payload || !signedXdr) {
+            res.status(400).json({ error: 'Missing payload or signedXdr' });
+            return;
+        }
+        if (!verifyPayloadSignature(payload, signedXdr)) {
+            res.status(401).json({ error: 'Invalid signature or expired payload' });
+            return;
+        }
+        const { walletAddress, action } = payload;
+        if (action !== 'deleteAccount') {
+            res.status(400).json({ error: 'Invalid action' });
+            return;
+        }
+        const userDocRef = db.doc(`users/${walletAddress}`);
+        const userSnap = await userDocRef.get();
+        if (!userSnap.exists) {
+            res.status(404).json({ error: 'User not found' });
+            return;
+        }
+        const profile = userSnap.data();
+        // 1. Cascade delete
+        if ((profile === null || profile === void 0 ? void 0 : profile.role) === 'customer') {
+            const purchasesSnap = await db.collection('purchases').where('uid', '==', walletAddress).get();
+            const batch = db.batch();
+            purchasesSnap.docs.forEach(d => batch.delete(d.ref));
+            await batch.commit();
+        }
+        if ((profile === null || profile === void 0 ? void 0 : profile.role) === 'merchant') {
+            await db.recursiveDelete(db.doc(`stores/${walletAddress}`));
+            const legacyProductsSnap = await db.collection('products').where('uid', '==', walletAddress).get();
+            const batch1 = db.batch();
+            legacyProductsSnap.docs.forEach(d => batch1.delete(d.ref));
+            await batch1.commit();
+            const legacyReceiptsSnap = await db.collection('receipts').where('uid', '==', walletAddress).get();
+            const batch2 = db.batch();
+            legacyReceiptsSnap.docs.forEach(d => batch2.delete(d.ref));
+            await batch2.commit();
+        }
+        // 2. Delete user profile
+        await userDocRef.delete();
+        res.status(200).json({ success: true });
+    }
+    catch (error) {
+        console.error('Error in secureDeleteAccount:', error);
+        res.status(500).json({ error: 'Internal Server Error' });
     }
 });
 //# sourceMappingURL=index.js.map
