@@ -74,6 +74,7 @@ async function performStoreSync(): Promise<void> {
       const eventName = scValToNative(topics[0]);
       
       if (eventName === 'StoreRegistered') {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const data = scValToNative(ev.value) as any;
         if (!data) continue;
         
@@ -111,6 +112,7 @@ async function performStoreSync(): Promise<void> {
         console.log(`Synced store: ${name} (${owner}) with ownerName: ${ownerName}`);
         
       } else if (eventName === 'StoreDeregistered') {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const data = scValToNative(ev.value) as any;
         if (!data) continue;
         
@@ -154,7 +156,7 @@ async function performStoreSync(): Promise<void> {
   console.log(`Sync complete up to ledger ${latestLedger}`);
 }
 
-export const syncStores = onSchedule('every 1 minutes', async (event) => {
+export const syncStores = onSchedule('every 1 minutes', async () => {
   try {
     await performStoreSync();
   } catch (error) {

@@ -28,6 +28,7 @@ export function useWallet(): WalletState {
   useEffect(() => {
     const stored = localStorage.getItem('sari_wallet_pubkey');
     if (stored) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setPublicKey(stored);
     }
   }, []);

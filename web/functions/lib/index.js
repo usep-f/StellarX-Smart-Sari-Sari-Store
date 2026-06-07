@@ -64,6 +64,7 @@ async function performStoreSync() {
                 continue;
             const eventName = (0, stellar_sdk_1.scValToNative)(topics[0]);
             if (eventName === 'StoreRegistered') {
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 const data = (0, stellar_sdk_1.scValToNative)(ev.value);
                 if (!data)
                     continue;
@@ -100,6 +101,7 @@ async function performStoreSync() {
                 console.log(`Synced store: ${name} (${owner}) with ownerName: ${ownerName}`);
             }
             else if (eventName === 'StoreDeregistered') {
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 const data = (0, stellar_sdk_1.scValToNative)(ev.value);
                 if (!data)
                     continue;
@@ -141,7 +143,7 @@ async function performStoreSync() {
     }, { merge: true });
     console.log(`Sync complete up to ledger ${latestLedger}`);
 }
-exports.syncStores = (0, scheduler_1.onSchedule)('every 1 minutes', async (event) => {
+exports.syncStores = (0, scheduler_1.onSchedule)('every 1 minutes', async () => {
     try {
         await performStoreSync();
     }

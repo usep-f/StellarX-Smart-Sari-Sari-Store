@@ -6,14 +6,22 @@ import {
   onAuthStateChanged,
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
-  signOut
+  signOut,
+  deleteUser as firebaseDeleteUser,
+  EmailAuthProvider,
+  reauthenticateWithCredential
 } from 'firebase/auth';
 import { 
   doc, 
   setDoc, 
   updateDoc, 
   onSnapshot,
-  getDoc
+  getDoc,
+  deleteDoc,
+  collection,
+  query,
+  where,
+  getDocs
 } from 'firebase/firestore';
 import { auth, db } from '@/lib/firebase';
 
@@ -33,6 +41,9 @@ interface AuthContextType {
   signUp: (email: string, password: string, role: 'merchant' | 'customer', fullName: string) => Promise<void>;
   logOut: () => Promise<void>;
   linkWalletAddress: (walletAddress: string) => Promise<void>;
+  updateProfileDetails: (fullName: string) => Promise<void>;
+  unlinkWalletAddress: () => Promise<void>;
+  deleteUserAccount: (password: string) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -143,6 +154,92 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
+  const updateProfileDetails = async (fullName: string) => {
+    if (!user) throw new Error('User must be logged in to update profile details.');
+    const userDocRef = doc(db, 'users', user.uid);
+    await updateDoc(userDocRef, {
+      fullName,
+    });
+
+    // Sync the owner's name to their registered store if they have a linked wallet
+    if (profile?.linkedWallet) {
+      try {
+        const storeDocRef = doc(db, 'stores', profile.linkedWallet);
+        const storeSnap = await getDoc(storeDocRef);
+        if (storeSnap.exists()) {
+          await updateDoc(storeDocRef, {
+            ownerName: fullName,
+          });
+        }
+      } catch (err) {
+        console.error('Failed to sync updated owner name to store document:', err);
+      }
+    }
+  };
+
+  const unlinkWalletAddress = async () => {
+    if (!user) throw new Error('User must be logged in to unlink a wallet.');
+    const userDocRef = doc(db, 'users', user.uid);
+    await updateDoc(userDocRef, {
+      linkedWallet: null,
+    });
+  };
+
+  const deleteUserAccount = async (password: string) => {
+    if (!user) throw new Error('User must be logged in to delete their account.');
+    if (!user.email) throw new Error('User email not found.');
+
+    // 1. Re-authenticate the user first to verify the request
+    const credential = EmailAuthProvider.credential(user.email, password);
+    await reauthenticateWithCredential(user, credential);
+
+    // 2. Cascade delete Firestore data
+    const userDocRef = doc(db, 'users', user.uid);
+
+    // A. Delete customer purchases
+    if (profile?.role === 'customer') {
+      const purchasesQuery = query(collection(db, 'purchases'), where('uid', '==', user.uid));
+      const purchasesSnap = await getDocs(purchasesQuery);
+      const deletePromises = purchasesSnap.docs.map((d) => deleteDoc(d.ref));
+      await Promise.all(deletePromises);
+    }
+
+    // B. Delete merchant store items and legacy data
+    if (profile?.role === 'merchant') {
+      if (profile.linkedWallet) {
+        // Delete nested products
+        const storeProductsQuery = query(collection(db, 'stores', profile.linkedWallet, 'products'));
+        const storeProductsSnap = await getDocs(storeProductsQuery);
+        const deleteStoreProdsPromises = storeProductsSnap.docs.map((d) => deleteDoc(d.ref));
+        await Promise.all(deleteStoreProdsPromises);
+
+        // Delete nested receipts
+        const storeReceiptsQuery = query(collection(db, 'stores', profile.linkedWallet, 'receipts'));
+        const storeReceiptsSnap = await getDocs(storeReceiptsQuery);
+        const deleteStoreReceiptsPromises = storeReceiptsSnap.docs.map((d) => deleteDoc(d.ref));
+        await Promise.all(deleteStoreReceiptsPromises);
+      }
+
+      // Delete legacy products
+      const legacyProductsQuery = query(collection(db, 'products'), where('uid', '==', user.uid));
+      const legacyProductsSnap = await getDocs(legacyProductsQuery);
+      const deleteLegacyProdsPromises = legacyProductsSnap.docs.map((d) => deleteDoc(d.ref));
+      await Promise.all(deleteLegacyProdsPromises);
+
+      // Delete legacy receipts
+      const legacyReceiptsQuery = query(collection(db, 'receipts'), where('uid', '==', user.uid));
+      const legacyReceiptsSnap = await getDocs(legacyReceiptsQuery);
+      const deleteLegacyReceiptsPromises = legacyReceiptsSnap.docs.map((d) => deleteDoc(d.ref));
+      await Promise.all(deleteLegacyReceiptsPromises);
+    }
+
+    // C. Delete the user profile document itself
+    await deleteDoc(userDocRef);
+
+    // 3. Delete from Firebase Authentication
+    await firebaseDeleteUser(user);
+  };
+
   return (
     <AuthContext.Provider
       value={{
@@ -153,6 +250,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         signUp,
         logOut,
         linkWalletAddress,
+        updateProfileDetails,
+        unlinkWalletAddress,
+        deleteUserAccount,
       }}
     >
       {children}
