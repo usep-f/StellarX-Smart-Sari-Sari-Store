@@ -164,14 +164,14 @@ export default function MerchantPage() {
         setGpsLoading(false);
       },
       (error) => {
-        console.error('GPS location error:', error);
+        console.warn('GPS location fallback triggered:', error.message);
         // Fallback to Quezon City
         setLat('14.6507');
         setLng('121.0506');
-        setActionError('GPS access denied. Defaulted coordinates to Quezon City.');
+        setActionError('GPS access denied or unavailable. Defaulted coordinates to Quezon City.');
         setGpsLoading(false);
       },
-      { enableHighAccuracy: true, timeout: 8000 }
+      { timeout: 10000, maximumAge: 60000 }
     );
   };
 
