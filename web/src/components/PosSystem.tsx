@@ -78,18 +78,70 @@ export default function PosSystem({ ownerAddress }: PosSystemProps) {
     const syncAndListen = async () => {
       setLoadingData(true);
 
-      const productsRef = collection(db, 'products');
-      const receiptsRef = collection(db, 'receipts');
+      const productsRef = collection(db, 'stores', ownerAddress, 'products');
+      const receiptsRef = collection(db, 'stores', ownerAddress, 'receipts');
 
-      // 1. Check if Firestore contains any products for this user
-      const productsQuery = query(productsRef, where('uid', '==', user.uid));
+      const productsQuery = query(productsRef);
       const productsSnap = await getDocs(productsQuery);
       
-      const receiptsQuery = query(receiptsRef, where('uid', '==', user.uid));
+      const receiptsQuery = query(receiptsRef, where('uid', '==', user.uid), orderBy('timestamp', 'desc'));
       const receiptsSnap = await getDocs(receiptsQuery);
 
       const dbHasProducts = !productsSnap.empty;
       const dbHasReceipts = !receiptsSnap.empty;
+
+      // --- Legacy Data Migration to Store Subcollections ---
+      const legacyProductsRef = collection(db, 'products');
+      const legacyReceiptsRef = collection(db, 'receipts');
+
+      if (!dbHasProducts) {
+        try {
+          const legacyProductsQuery = query(legacyProductsRef, where('ownerAddress', '==', ownerAddress));
+          const legacyProductsSnap = await getDocs(legacyProductsQuery);
+          if (!legacyProductsSnap.empty) {
+            console.log(`Migrating ${legacyProductsSnap.size} products from root collection to stores/${ownerAddress}/products...`);
+            for (const docSnap of legacyProductsSnap.docs) {
+              const prod = docSnap.data();
+              await setDoc(doc(db, 'stores', ownerAddress, 'products', prod.id), {
+                id: prod.id,
+                name: prod.name,
+                price: prod.price,
+                uid: user.uid,
+                ownerAddress: ownerAddress,
+                createdAt: prod.createdAt || Date.now()
+              });
+              await deleteDoc(docSnap.ref);
+            }
+          }
+        } catch (err) {
+          console.error('Failed to migrate legacy root products:', err);
+        }
+      }
+
+      if (!dbHasReceipts) {
+        try {
+          const legacyReceiptsQuery = query(legacyReceiptsRef, where('uid', '==', user.uid));
+          const legacyReceiptsSnap = await getDocs(legacyReceiptsQuery);
+          if (!legacyReceiptsSnap.empty) {
+            console.log(`Migrating ${legacyReceiptsSnap.size} receipts from root collection to stores/${ownerAddress}/receipts...`);
+            for (const docSnap of legacyReceiptsSnap.docs) {
+              const rec = docSnap.data();
+              await setDoc(doc(db, 'stores', ownerAddress, 'receipts', docSnap.id), {
+                timestamp: rec.timestamp,
+                items: rec.items,
+                total: rec.total,
+                memo: rec.memo,
+                txHash: rec.txHash,
+                uid: user.uid,
+                merchantAddress: ownerAddress
+              });
+              await deleteDoc(docSnap.ref);
+            }
+          }
+        } catch (err) {
+          console.error('Failed to migrate legacy root receipts:', err);
+        }
+      }
 
       // 2. Perform Migration if Firestore is empty but LocalStorage has data
       const storedProductsStr = localStorage.getItem(`sari_products_${ownerAddress}`);
@@ -99,7 +151,7 @@ export default function PosSystem({ ownerAddress }: PosSystemProps) {
         try {
           const localProducts = JSON.parse(storedProductsStr) as Product[];
           for (const prod of localProducts) {
-            await setDoc(doc(db, 'products', prod.id), {
+            await setDoc(doc(db, 'stores', ownerAddress, 'products', prod.id), {
               id: prod.id,
               name: prod.name,
               price: prod.price,
@@ -108,7 +160,7 @@ export default function PosSystem({ ownerAddress }: PosSystemProps) {
               createdAt: Date.now()
             });
           }
-          console.log('Successfully migrated products from local storage to Firestore.');
+          console.log('Successfully migrated products from local storage to Firestore subcollection.');
         } catch (err) {
           console.error('Failed to migrate local products:', err);
         }
@@ -121,7 +173,7 @@ export default function PosSystem({ ownerAddress }: PosSystemProps) {
           { id: 'prod_fudgee', name: 'Fudgee Barr Chocolate', price: 1.0 },
         ];
         for (const prod of mockProducts) {
-          await setDoc(doc(db, 'products', prod.id), {
+          await setDoc(doc(db, 'stores', ownerAddress, 'products', prod.id), {
             id: prod.id,
             name: prod.name,
             price: prod.price,
@@ -136,7 +188,7 @@ export default function PosSystem({ ownerAddress }: PosSystemProps) {
         try {
           const localReceipts = JSON.parse(storedReceiptsStr) as Receipt[];
           for (const rec of localReceipts) {
-            await addDoc(collection(db, 'receipts'), {
+            await addDoc(collection(db, 'stores', ownerAddress, 'receipts'), {
               timestamp: rec.timestamp,
               items: rec.items,
               total: rec.total,
@@ -146,7 +198,7 @@ export default function PosSystem({ ownerAddress }: PosSystemProps) {
               merchantAddress: ownerAddress
             });
           }
-          console.log('Successfully migrated receipts from local storage to Firestore.');
+          console.log('Successfully migrated receipts from local storage to Firestore subcollection.');
         } catch (err) {
           console.error('Failed to migrate local receipts:', err);
         }
@@ -173,7 +225,7 @@ export default function PosSystem({ ownerAddress }: PosSystemProps) {
 
       // 4. Set up Real-time listener for Receipts
       const unsubscribeReceipts = onSnapshot(
-        query(receiptsRef, where('uid', '==', user.uid), orderBy('timestamp', 'desc')),
+        receiptsQuery,
         (snapshot) => {
           const recList: Receipt[] = [];
           snapshot.forEach((docSnap) => {
@@ -218,7 +270,7 @@ export default function PosSystem({ ownerAddress }: PosSystemProps) {
 
     const prodId = `prod_${Date.now()}`;
     try {
-      await setDoc(doc(db, 'products', prodId), {
+      await setDoc(doc(db, 'stores', ownerAddress, 'products', prodId), {
         id: prodId,
         name: newProductName.trim(),
         price: priceNum,
@@ -237,7 +289,7 @@ export default function PosSystem({ ownerAddress }: PosSystemProps) {
   // Delete Product from Firestore
   const handleDeleteProduct = async (id: string) => {
     try {
-      await deleteDoc(doc(db, 'products', id));
+      await deleteDoc(doc(db, 'stores', ownerAddress, 'products', id));
       // Remove from cart if exists
       setCart((prev) => prev.filter((item) => item.product.id !== id));
     } catch (err) {
@@ -360,8 +412,8 @@ export default function PosSystem({ ownerAddress }: PosSystemProps) {
             setActiveTxHash(tx.hash);
             setCheckoutState('paid');
             
-            // Save receipt to Firestore
-            await addDoc(collection(db, 'receipts'), {
+            // Save receipt to Firestore subcollection
+            await addDoc(collection(db, 'stores', ownerAddress, 'receipts'), {
               timestamp: Date.now(),
               items: cart,
               total: activeTotal,
@@ -405,7 +457,7 @@ export default function PosSystem({ ownerAddress }: PosSystemProps) {
     setCheckoutState('paid');
     
     try {
-      await addDoc(collection(db, 'receipts'), {
+      await addDoc(collection(db, 'stores', ownerAddress, 'receipts'), {
         timestamp: Date.now(),
         items: cart,
         total: activeTotal,

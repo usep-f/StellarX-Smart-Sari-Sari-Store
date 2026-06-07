@@ -17,6 +17,7 @@ export default function AuthPage() {
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [role, setRole] = useState<'customer' | 'merchant'>('customer');
+  const [fullName, setFullName] = useState('');
   
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -44,6 +45,11 @@ export default function AuthPage() {
       return;
     }
 
+    if (!isLogin && !fullName.trim()) {
+      setError('Please enter your full name.');
+      return;
+    }
+
     if (!isLogin && password !== confirmPassword) {
       setError('Passwords do not match.');
       return;
@@ -60,7 +66,7 @@ export default function AuthPage() {
         await signIn(email.trim(), password);
         setSuccess('Login successful! Redirecting...');
       } else {
-        await signUp(email.trim(), password, role);
+        await signUp(email.trim(), password, role, fullName.trim());
         setSuccess('Registration successful! Redirecting...');
       }
     } catch (err: unknown) {
@@ -167,6 +173,25 @@ export default function AuthPage() {
                     <Store className={`w-5 h-5 ${role === 'merchant' ? 'text-[#ff7a00]' : ''}`} />
                     <span className="text-xs font-bold">Store Owner</span>
                   </button>
+                </div>
+              </div>
+            )}
+
+            {/* Full Name Field (Only for SignUp) */}
+            {!isLogin && (
+              <div className="flex flex-col gap-1">
+                <label className="text-[11px] text-gray-400 font-medium">Full Name</label>
+                <div className="relative">
+                  <User className="absolute left-3.5 top-3.5 w-4 h-4 text-gray-500" />
+                  <input
+                    type="text"
+                    placeholder="John Doe"
+                    value={fullName}
+                    onChange={(e) => setFullName(e.target.value)}
+                    className="w-full bg-[#161c24] border border-card-border rounded-xl py-3 pl-10 pr-4 text-xs text-white placeholder-gray-600 outline-none focus:border-[#ff7a00] transition"
+                    required={!isLogin}
+                    disabled={loading}
+                  />
                 </div>
               </div>
             )}

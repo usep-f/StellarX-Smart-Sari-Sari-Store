@@ -14,6 +14,7 @@ export interface Store {
   name: string;
   lat: number;
   lng: number;
+  ownerName?: string;
 }
 
 export function registryConfigured(): boolean {
@@ -32,6 +33,7 @@ export async function getAllStores(): Promise<Store[]> {
         name: data.name,
         lat: data.lat,
         lng: data.lng,
+        ownerName: data.ownerName,
       } as Store;
     });
   } catch (err) {
@@ -52,6 +54,7 @@ export async function getStore(owner: string): Promise<Store | null> {
         name: data.name,
         lat: data.lat,
         lng: data.lng,
+        ownerName: data.ownerName,
       } as Store;
     }
     return null;

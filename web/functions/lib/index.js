@@ -73,22 +73,64 @@ async function performStoreSync() {
                 const name = data.name;
                 const lat = Number(data.lat) / 1000000;
                 const lng = Number(data.lng) / 1000000;
+                // Query the users collection to see if a merchant has already linked this wallet.
+                // If they have, we can populate the ownerName field immediately.
+                let ownerName = 'Pending Link';
+                try {
+                    const usersRef = db.collection('users');
+                    const querySnap = await usersRef.where('linkedWallet', '==', owner).limit(1).get();
+                    if (!querySnap.empty) {
+                        const userData = querySnap.docs[0].data();
+                        if (userData && userData.fullName) {
+                            ownerName = userData.fullName;
+                        }
+                    }
+                }
+                catch (err) {
+                    console.error(`Error querying user profile for owner ${owner}:`, err);
+                }
                 await db.doc(`stores/${owner}`).set({
                     owner,
                     name,
                     lat,
                     lng,
+                    ownerName,
                     syncedAt: firestore_1.FieldValue.serverTimestamp(),
-                });
-                console.log(`Synced store: ${name} (${owner})`);
+                }, { merge: true });
+                console.log(`Synced store: ${name} (${owner}) with ownerName: ${ownerName}`);
             }
             else if (eventName === 'StoreDeregistered') {
                 const data = (0, stellar_sdk_1.scValToNative)(ev.value);
                 if (!data)
                     continue;
-                const owner = data.owner;
-                await db.doc(`stores/${owner}`).delete();
-                console.log(`Deregistered store of: ${owner}`);
+                const owner = typeof data === 'string' ? data : (data.owner || data[0]);
+                if (!owner)
+                    continue;
+                // 1. Clear linkedWallet in users collection for matching owners
+                try {
+                    const usersRef = db.collection('users');
+                    const querySnap = await usersRef.where('linkedWallet', '==', owner).get();
+                    if (!querySnap.empty) {
+                        const batch = db.batch();
+                        querySnap.forEach((userDoc) => {
+                            batch.update(userDoc.ref, { linkedWallet: null });
+                        });
+                        await batch.commit();
+                        console.log(`Cleared linkedWallet for ${querySnap.size} user(s) matching owner: ${owner}`);
+                    }
+                }
+                catch (err) {
+                    console.error(`Error clearing linkedWallet for owner ${owner}:`, err);
+                }
+                // 2. Recursively delete the store document and all its subcollections (products, receipts, etc.)
+                try {
+                    const storeRef = db.doc(`stores/${owner}`);
+                    await db.recursiveDelete(storeRef);
+                    console.log(`Recursively deleted store and all subcollections for: ${owner}`);
+                }
+                catch (err) {
+                    console.error(`Error recursively deleting store for owner ${owner}:`, err);
+                }
             }
         }
     }

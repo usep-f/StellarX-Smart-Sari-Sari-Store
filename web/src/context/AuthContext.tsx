@@ -12,7 +12,8 @@ import {
   doc, 
   setDoc, 
   updateDoc, 
-  onSnapshot 
+  onSnapshot,
+  getDoc
 } from 'firebase/firestore';
 import { auth, db } from '@/lib/firebase';
 
@@ -21,6 +22,7 @@ export interface UserProfile {
   role: 'merchant' | 'customer';
   linkedWallet: string | null;
   createdAt: number;
+  fullName?: string;
 }
 
 interface AuthContextType {
@@ -28,7 +30,7 @@ interface AuthContextType {
   profile: UserProfile | null;
   loading: boolean;
   signIn: (email: string, password: string) => Promise<void>;
-  signUp: (email: string, password: string, role: 'merchant' | 'customer') => Promise<void>;
+  signUp: (email: string, password: string, role: 'merchant' | 'customer', fullName: string) => Promise<void>;
   logOut: () => Promise<void>;
   linkWalletAddress: (walletAddress: string) => Promise<void>;
 }
@@ -89,7 +91,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  const signUp = async (email: string, password: string, role: 'merchant' | 'customer') => {
+  const signUp = async (email: string, password: string, role: 'merchant' | 'customer', fullName: string) => {
     setLoading(true);
     try {
       const userCredential = await createUserWithEmailAndPassword(auth, email, password);
@@ -99,6 +101,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const userProfile: UserProfile = {
         email,
         role,
+        fullName,
         linkedWallet: null,
         createdAt: Date.now(),
       };
@@ -125,6 +128,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await updateDoc(userDocRef, {
       linkedWallet: walletAddress,
     });
+
+    // Sync the owner's name to their registered store, if it exists
+    try {
+      const storeDocRef = doc(db, 'stores', walletAddress);
+      const storeSnap = await getDoc(storeDocRef);
+      if (storeSnap.exists()) {
+        await updateDoc(storeDocRef, {
+          ownerName: profile?.fullName || user.email?.split('@')[0] || 'Unknown',
+        });
+      }
+    } catch (err) {
+      console.error('Failed to sync owner name to store document:', err);
+    }
   };
 
   return (

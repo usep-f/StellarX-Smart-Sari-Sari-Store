@@ -345,9 +345,12 @@ export default function Home() {
                   </div>
                   <div className="flex items-start gap-2.5 text-gray-400">
                     <User className="w-4 h-4 text-[#ffc700] shrink-0 mt-0.5" />
-                    <div className="font-mono text-[10px] break-all leading-normal">
-                      Owner: <br />
-                      <span className="text-white select-all">{selectedStore.owner}</span>
+                    <div>
+                      <span className="text-[10px] text-gray-500 font-bold block uppercase tracking-wider">Owner</span>
+                      <span className="text-white text-xs font-semibold block">{selectedStore.ownerName || 'Pending Link'}</span>
+                      <span className="font-mono text-[9px] text-gray-500 break-all leading-normal mt-0.5 block select-all">
+                        {selectedStore.owner}
+                      </span>
                     </div>
                   </div>
                 </div>
