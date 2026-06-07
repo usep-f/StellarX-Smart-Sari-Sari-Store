@@ -111,7 +111,7 @@ export default function Navbar() {
           <div className="hidden md:flex items-center gap-3">
             {loading && !user ? (
               <div className="w-24 h-9 rounded-xl bg-white/5 border border-white/10 animate-pulse" />
-            ) : user ? (
+            ) : (user && profile) ? (
               <div className="relative">
                 {/* Profile Avatar trigger */}
                 <button
@@ -231,7 +231,7 @@ export default function Navbar() {
             <div className="border-t border-white/5 pt-4 flex flex-col gap-2">
               {loading && !user ? (
                 <div className="w-full h-12 rounded-xl bg-white/5 border border-white/10 animate-pulse" />
-              ) : user ? (
+              ) : (user && profile) ? (
                 <>
                   <div className="flex items-center gap-2 px-1 mb-2">
                     <div className="w-8 h-8 rounded-lg bg-linear-to-tr from-[#ff7a00]/20 to-[#00f0ff]/20 border border-[#ff7a00]/30 flex items-center justify-center text-xs font-extrabold text-white">

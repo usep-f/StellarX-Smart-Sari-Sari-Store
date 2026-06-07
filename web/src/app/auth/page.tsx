@@ -301,6 +301,18 @@ export default function AuthPage() {
                   'Complete Registration'
                 )}
               </button>
+              
+              <button
+                type="button"
+                onClick={async () => {
+                  await logOut();
+                  setIsOnboarding(false);
+                }}
+                disabled={loading}
+                className="text-xs text-gray-500 hover:text-white transition hover:underline mt-1.5 cursor-pointer text-center block w-full bg-transparent border-0"
+              >
+                Disconnect / Use Different Wallet
+              </button>
             </form>
           )}
 

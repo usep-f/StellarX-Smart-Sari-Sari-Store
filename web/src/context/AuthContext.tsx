@@ -10,6 +10,7 @@ import { db } from '@/lib/firebase';
 import { TransactionBuilder, Account, Memo, Operation } from '@stellar/stellar-sdk';
 import { getKit } from '@/lib/wallet';
 import { NETWORK_PASSPHRASE } from '@/lib/stellar';
+import { usePathname } from 'next/navigation';
 
 export interface User {
   uid: string;
@@ -49,6 +50,25 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
+  const pathname = usePathname();
+
+  const logOut = async () => {
+    setUser(null);
+    setProfile(null);
+    localStorage.removeItem('activeWallet');
+  };
+
+  // Onboarding/Registration Failsafe:
+  // If the user has connected a wallet but has no profile document, and they navigate away 
+  // from the /auth portal, log them out automatically to prevent a half-logged-in session.
+  useEffect(() => {
+    if (!loading && user && !profile && pathname !== '/auth') {
+      const timerId = setTimeout(() => {
+        logOut();
+      }, 0);
+      return () => clearTimeout(timerId);
+    }
+  }, [loading, user, profile, pathname]);
 
   // Restore session from localStorage
   useEffect(() => {
@@ -177,12 +197,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const deleteUserAccount = async () => {
     await sendSecurePayload('secureDeleteAccount', 'deleteAccount');
     logOut();
-  };
-
-  const logOut = async () => {
-    setUser(null);
-    setProfile(null);
-    localStorage.removeItem('activeWallet');
   };
 
   return (
