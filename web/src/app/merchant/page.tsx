@@ -15,14 +15,15 @@ import {
   Store 
 } from '@/lib/registryContract';
 import { db } from '@/lib/firebase';
-import { doc, onSnapshot } from 'firebase/firestore';
 import { signAndSubmit } from '@/lib/sign';
 import PosSystem from '@/components/PosSystem';
 import ConnectWallet from '@/components/ConnectWallet';
 import { 
   Store as StoreIcon, MapPin, Navigation, Loader2, 
-  AlertCircle, Wallet, ArrowLeft, RefreshCw, LogOut, CheckCircle2 
+  AlertCircle, Wallet, ArrowLeft, RefreshCw, LogOut, CheckCircle2,
+  Users
 } from 'lucide-react';
+import { collectionGroup, query, where, onSnapshot } from 'firebase/firestore';
 
 // Dynamically import Map component (ssr: false) to prevent Next.js build errors
 const Map = dynamic(() => import('@/components/Map'), {
@@ -42,6 +43,7 @@ export default function MerchantPage() {
 
   // Store registration form state
   const [storeName, setStoreName] = useState('');
+  const [managerAddress, setManagerAddress] = useState('');
   const [lat, setLat] = useState('');
   const [lng, setLng] = useState('');
   const [gpsLoading, setGpsLoading] = useState(false);
@@ -54,6 +56,7 @@ export default function MerchantPage() {
   // Loaded contract data
   const [stores, setStores] = useState<Store[]>([]);
   const [merchantStore, setMerchantStore] = useState<Store | null>(null);
+  const [managedStores, setManagedStores] = useState<Store[]>([]);
   const [loadingStore, setLoadingStore] = useState(false);
 
   // Wallet balances
@@ -96,18 +99,20 @@ export default function MerchantPage() {
       initStoreData();
 
       // Real-time listener for the merchant's store
-      const unsubscribe = onSnapshot(
-        doc(db, 'stores', publicKey),
-        (docSnap) => {
-          if (docSnap.exists()) {
-            const data = docSnap.data();
+      const storesQuery = query(collectionGroup(db, 'stores'), where('owner', '==', publicKey));
+      const unsubscribeOwned = onSnapshot(
+        storesQuery,
+        (snapshot) => {
+          if (!snapshot.empty) {
+            const data = snapshot.docs[0].data();
             setMerchantStore({
               owner: data.owner,
+              manager: data.manager,
               name: data.name,
               lat: data.lat,
               lng: data.lng,
             } as Store);
-            setSyncing(false); // Stop syncing if we get the store
+            setSyncing(false);
           } else {
             setMerchantStore(null);
           }
@@ -120,10 +125,20 @@ export default function MerchantPage() {
         }
       );
 
-      return () => unsubscribe();
+      // Real-time listener for stores managed by this wallet
+      const managerQuery = query(collectionGroup(db, 'stores'), where('manager', '==', publicKey));
+      const unsubscribeManaged = onSnapshot(managerQuery, (snapshot) => {
+        setManagedStores(snapshot.docs.map(doc => doc.data() as Store));
+      });
+
+      return () => {
+        unsubscribeOwned();
+        unsubscribeManaged();
+      };
     } else {
       const clearState = async () => {
         setMerchantStore(null);
+        setManagedStores([]);
         setBalances(null);
         setStores([]);
       };
@@ -195,7 +210,8 @@ export default function MerchantPage() {
 
     try {
       // 1. Build contract call XDR
-      const xdr = await buildRegisterStoreXDR(publicKey, storeName.trim(), latNum, lngNum);
+      const managerArg = managerAddress.trim() || publicKey;
+      const xdr = await buildRegisterStoreXDR(publicKey, managerArg, storeName.trim(), latNum, lngNum);
       
       // 2. Sign, submit, and poll using Freighter
       await signAndSubmit(xdr, publicKey);
@@ -203,6 +219,7 @@ export default function MerchantPage() {
       // 3. UI will update automatically via onSnapshot once the indexer picks it up
       setSyncing(true);
       setStoreName('');
+      setManagerAddress('');
       setLat('');
       setLng('');
     } catch (err: unknown) {
@@ -445,6 +462,18 @@ export default function MerchantPage() {
                       />
                     </div>
 
+                    <div className="flex flex-col gap-1">
+                      <label className="text-[11px] text-gray-400 font-medium">Manager Wallet Address (Optional)</label>
+                      <input
+                        type="text"
+                        placeholder="Leave blank to self-manage"
+                        value={managerAddress}
+                        onChange={(e) => setManagerAddress(e.target.value)}
+                        className="bg-[#161c24] border border-card-border rounded-xl p-3 text-xs text-white placeholder-gray-600 outline-none focus:border-[#ff7a00] transition font-mono"
+                        disabled={registering}
+                      />
+                    </div>
+
                     <div className="grid grid-cols-2 gap-3">
                       <div className="flex flex-col gap-1">
                         <label className="text-[11px] text-gray-400 font-medium">Latitude</label>
@@ -530,6 +559,36 @@ export default function MerchantPage() {
                       )}
                     </button>
                   </form>
+                </div>
+              </div>
+            ) : managedStores.length > 0 && !merchantStore ? (
+              // Multi-Store Manager Dashboard
+              <div className="flex flex-col gap-6">
+                <div className="glass rounded-3xl p-5 border border-card-border flex flex-col gap-4">
+                  <div className="flex items-center gap-3">
+                    <div className="w-12 h-12 rounded-2xl bg-[#ff7a00]/10 border border-[#ff7a00]/30 flex items-center justify-center text-white">
+                      <Users className="w-5 h-5 text-[#ff7a00]" />
+                    </div>
+                    <div>
+                      <h2 className="font-bold text-base text-white">Master Merchant Dashboard</h2>
+                      <p className="text-xs text-gray-400 mt-1">You are managing {managedStores.length} store(s).</p>
+                    </div>
+                  </div>
+                  
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mt-2">
+                    {managedStores.map(store => (
+                      <div key={store.owner} className="bg-white/5 border border-white/10 rounded-2xl p-4 flex flex-col gap-2 relative">
+                        <div className="flex justify-between items-start">
+                          <h3 className="text-sm font-bold text-white">{store.name}</h3>
+                          <span className="bg-[#00c853]/15 text-[#00c853] text-[9px] font-bold px-2 py-0.5 rounded-full">
+                            Active
+                          </span>
+                        </div>
+                        <p className="text-[10px] text-gray-400 font-mono">Owner: {store.owner.slice(0, 8)}...{store.owner.slice(-8)}</p>
+                        <p className="text-[10px] text-gray-400"><MapPin className="w-3 h-3 inline mr-1" /> {store.lat.toFixed(4)}, {store.lng.toFixed(4)}</p>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               </div>
             ) : (

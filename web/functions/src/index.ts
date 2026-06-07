@@ -8,12 +8,12 @@ const db = getFirestore();
 
 // In a real production setup, load this from config or environment variables
 const RPC_URL = 'https://soroban-testnet.stellar.org';
-const REGISTRY_CONTRACT_ID = process.env.REGISTRY_CONTRACT_ID || 'CDZEWZG3AHI4DFTD6O2AQE77JPDBQDAT7XJJYUWCWAS5G3FVCLH3CN33';
+const REGISTRY_CONTRACT_ID = process.env.REGISTRY_CONTRACT_ID || 'CCW7NE7MDQAF6CSZYU46DQILO7FPF664H7BT4FBIHG7OOQPA3UR3CCEX';
 const INITIAL_LEDGER = 4321000;
 
 const server = new rpc.Server(RPC_URL);
 
-export const syncStores = onSchedule('every 1 minutes', async (event) => {
+export const syncStores = onSchedule('every 1 minutes', async () => {
   try {
     const configRef = db.doc('config/indexer');
     const configDoc = await configRef.get();
@@ -56,32 +56,61 @@ export const syncStores = onSchedule('every 1 minutes', async (event) => {
         const eventName = scValToNative(topics[0]);
         
         if (eventName === 'StoreRegistered') {
-          const data = scValToNative(ev.value) as any;
+          const data = scValToNative(ev.value) as Record<string, unknown>;
           if (!data) continue;
           
           // Depending on Soroban SDK versions, structs might be returned as arrays of values
           // or objects. We handle the object format based on stellar-sdk behavior:
           const owner = data.owner;
+          const manager = data.manager || data.owner; // Default to owner if manager is missing (backwards compat)
           const name = data.name;
           const lat = Number(data.lat) / 1000000;
           const lng = Number(data.lng) / 1000000;
           
-          await db.doc(`stores/${owner}`).set({
+          await db.doc(`merchants/${manager}/stores/${owner}`).set({
             owner,
+            manager,
             name,
             lat,
             lng,
             syncedAt: FieldValue.serverTimestamp(),
           });
-          console.log(`Synced store: ${name} (${owner})`);
+          console.log(`Synced store: ${name} (${owner}) under manager: ${manager}`);
           
         } else if (eventName === 'StoreDeregistered') {
-          const data = scValToNative(ev.value) as any;
+          const owner = scValToNative(ev.value) as string;
+          if (!owner) continue;
+          
+          // Use collectionGroup query to find and delete the store regardless of manager
+          const snapshot = await db.collectionGroup('stores').where('owner', '==', owner).get();
+          const deletions = snapshot.docs.map(doc => doc.ref.delete());
+          await Promise.all(deletions);
+          
+          console.log(`Deregistered store of: ${owner}`);
+        } else if (eventName === 'ManagerUpdated') {
+          const data = scValToNative(ev.value) as Record<string, unknown>;
           if (!data) continue;
           
           const owner = data.owner;
-          await db.doc(`stores/${owner}`).delete();
-          console.log(`Deregistered store of: ${owner}`);
+          const newManager = data.manager;
+          
+          const snapshot = await db.collectionGroup('stores').where('owner', '==', owner).get();
+          if (!snapshot.empty) {
+            const oldDoc = snapshot.docs[0];
+            const storeData = oldDoc.data();
+            
+            const newPath = `merchants/${newManager}/stores/${owner}`;
+            
+            if (oldDoc.ref.path !== newPath) {
+               await db.doc(newPath).set({
+                 ...storeData,
+                 manager: newManager,
+                 syncedAt: FieldValue.serverTimestamp(),
+               });
+               await oldDoc.ref.delete();
+               console.log(`Updated manager for store ${owner} to ${newManager}`);
+            }
+          }
         }
       }
     }

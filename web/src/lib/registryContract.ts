@@ -6,11 +6,12 @@ import {
   nativeToScVal,
 } from '@stellar/stellar-sdk';
 import { server, NETWORK_PASSPHRASE, REGISTRY_CONTRACT_ID } from './stellar';
-import { collection, getDocs, doc, getDoc } from 'firebase/firestore';
+import { getDocs, collectionGroup, query, where } from 'firebase/firestore';
 import { db } from './firebase';
 
 export interface Store {
   owner: string;
+  manager?: string;
   name: string;
   lat: number;
   lng: number;
@@ -20,15 +21,16 @@ export function registryConfigured(): boolean {
   return Boolean(REGISTRY_CONTRACT_ID);
 }
 
-/** Fetch all stores from Firestore (populated by indexer) */
+/** Fetch all stores from Firestore (populated by indexer) using collectionGroup */
 export async function getAllStores(): Promise<Store[]> {
   try {
-    const storesCol = collection(db, 'stores');
-    const storeSnapshot = await getDocs(storesCol);
+    const storesQuery = collectionGroup(db, 'stores');
+    const storeSnapshot = await getDocs(storesQuery);
     return storeSnapshot.docs.map(doc => {
       const data = doc.data();
       return {
         owner: data.owner,
+        manager: data.manager,
         name: data.name,
         lat: data.lat,
         lng: data.lng,
@@ -40,15 +42,16 @@ export async function getAllStores(): Promise<Store[]> {
   }
 }
 
-/** Fetch a single store by owner from Firestore */
+/** Fetch a single store by owner using collectionGroup */
 export async function getStore(owner: string): Promise<Store | null> {
   try {
-    const docRef = doc(db, 'stores', owner);
-    const docSnap = await getDoc(docRef);
-    if (docSnap.exists()) {
-      const data = docSnap.data();
+    const storesQuery = query(collectionGroup(db, 'stores'), where('owner', '==', owner));
+    const storeSnapshot = await getDocs(storesQuery);
+    if (!storeSnapshot.empty) {
+      const data = storeSnapshot.docs[0].data();
       return {
         owner: data.owner,
+        manager: data.manager,
         name: data.name,
         lat: data.lat,
         lng: data.lng,
@@ -64,6 +67,7 @@ export async function getStore(owner: string): Promise<Store | null> {
 /** Build contribution transaction to register a store */
 export async function buildRegisterStoreXDR(
   sender: string,
+  manager: string,
   name: string,
   lat: number,
   lng: number,
@@ -87,6 +91,7 @@ export async function buildRegisterStoreXDR(
       contract.call(
         'register_store',
         nativeToScVal(sender, { type: 'address' }),
+        nativeToScVal(manager, { type: 'address' }),
         nativeToScVal(name, { type: 'string' }),
         nativeToScVal(latInt, { type: 'i32' }),
         nativeToScVal(lngInt, { type: 'i32' }),
@@ -119,7 +124,7 @@ export async function buildDeregisterStoreXDR(sender: string): Promise<string> {
     networkPassphrase: NETWORK_PASSPHRASE,
   })
     .addOperation(
-      contract.call('deregister_store', nativeToScVal(sender, { type: 'address' })),
+      contract.call('deregister_store', nativeToScVal(sender, { type: 'address' }), nativeToScVal(sender, { type: 'address' })),
     )
     .setTimeout(60)
     .build();

@@ -10,7 +10,7 @@ import { server } from '@/lib/stellar';
 import { useToast } from '@/components/ui/Toast';
 import { 
   ChevronDown, ChevronUp, RefreshCw, Loader2, Coins, MapPin, 
-  User, ArrowRight, Check, HelpCircle, Shield, Globe, Cpu, X, Send, Code, Megaphone, MessageCircle,
+  User, ArrowRight, Check, HelpCircle, Shield, Globe, Cpu, X, Code, Megaphone, MessageCircle,
   Store as StoreIcon
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';

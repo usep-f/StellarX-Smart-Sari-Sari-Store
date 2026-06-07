@@ -10,6 +10,7 @@ const EXTEND_TO: u32 = 518400; // ~30 days
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Store {
     pub owner: Address,
+    pub manager: Address,
     pub name: String,
     pub lat: i32, // Latitude * 1,000,000
     pub lng: i32, // Longitude * 1,000,000
@@ -27,6 +28,7 @@ pub enum Error {
     StoreAlreadyExists = 1,
     StoreDoesNotExist = 2,
     InvalidName = 3,
+    Unauthorized = 4,
 }
 
 #[contract]
@@ -38,6 +40,7 @@ impl SariSariRegistryContract {
     pub fn register_store(
         env: Env,
         owner: Address,
+        manager: Address,
         name: String,
         lat: i32,
         lng: i32,
@@ -61,6 +64,7 @@ impl SariSariRegistryContract {
         // Add the new store
         let new_store = Store {
             owner: owner.clone(),
+            manager,
             name: name.clone(),
             lat,
             lng,
@@ -79,14 +83,19 @@ impl SariSariRegistryContract {
         Ok(())
     }
 
-    /// Deregister a store. The caller must be the owner.
-    pub fn deregister_store(env: Env, owner: Address) -> Result<(), Error> {
-        // Authenticate the owner
-        owner.require_auth();
+    /// Deregister a store. The caller must be the owner or the manager.
+    pub fn deregister_store(env: Env, owner: Address, caller: Address) -> Result<(), Error> {
+        // Authenticate the caller
+        caller.require_auth();
 
         let store_key = DataKey::Store(owner.clone());
+        let store: Option<Store> = env.storage().persistent().get(&store_key);
 
-        if !env.storage().persistent().has(&store_key) {
+        if let Some(s) = store {
+            if caller != s.owner && caller != s.manager {
+                return Err(Error::Unauthorized);
+            }
+        } else {
             return Err(Error::StoreDoesNotExist);
         }
 
@@ -98,6 +107,29 @@ impl SariSariRegistryContract {
             .publish((Symbol::new(&env, "StoreDeregistered"),), owner);
 
         Ok(())
+    }
+
+    /// Update the manager of a store. The caller must be the current manager.
+    pub fn update_manager(env: Env, owner: Address, new_manager: Address) -> Result<(), Error> {
+        let store_key = DataKey::Store(owner.clone());
+        let store: Option<Store> = env.storage().persistent().get(&store_key);
+
+        if let Some(mut s) = store {
+            s.manager.require_auth();
+            s.manager = new_manager;
+            
+            env.storage().persistent().set(&store_key, &s);
+            env.storage()
+                .persistent()
+                .extend_ttl(&store_key, MIN_TTL, EXTEND_TO);
+
+            env.events()
+                .publish((Symbol::new(&env, "ManagerUpdated"),), s);
+            
+            Ok(())
+        } else {
+            Err(Error::StoreDoesNotExist)
+        }
     }
 
     /// Retrieve a single registered store by its owner.
