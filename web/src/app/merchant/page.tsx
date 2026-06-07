@@ -18,7 +18,6 @@ import { db } from '@/lib/firebase';
 import { doc, onSnapshot } from 'firebase/firestore';
 import { signAndSubmit } from '@/lib/sign';
 import PosSystem from '@/components/PosSystem';
-import ConnectWallet from '@/components/ConnectWallet';
 import { 
   Store as StoreIcon, MapPin, Navigation, Loader2, 
   AlertCircle, Wallet, ArrowLeft, RefreshCw, LogOut, CheckCircle2
@@ -41,7 +40,7 @@ export default function MerchantPage() {
   const router = useRouter();
   const wallet = useWallet();
   const { publicKey, connect, connecting } = wallet;
-  const { user, profile, loading: authLoading, logOut, linkWalletAddress } = useAuth();
+  const { user, profile, loading: authLoading, logOut } = useAuth();
   const { error: showToastError, warning: showToastWarning } = useToast();
 
   // Store registration form state
@@ -148,7 +147,7 @@ export default function MerchantPage() {
       };
       clearState();
     }
-  }, [publicKey, getBalances]);
+  }, [publicKey, getBalances, showToastError]);
 
   // Fund wallet via Friendbot
   const handleFund = async () => {
@@ -166,20 +165,7 @@ export default function MerchantPage() {
     }
   };
 
-  const [linkingWallet, setLinkingWallet] = useState(false);
-
-  const handleLinkWallet = async () => {
-    if (!publicKey) return;
-    setLinkingWallet(true);
-    try {
-      await linkWalletAddress(publicKey);
-    } catch (err) {
-      console.error(err);
-      showToastError('Failed to link wallet address.');
-    } finally {
-      setLinkingWallet(false);
-    }
-  };
+  // Wallet linking is no longer needed since wallet is the unique identity
 
   // Get current GPS location
   const handleGetLocation = () => {
@@ -386,59 +372,28 @@ export default function MerchantPage() {
           </div>
 
           <div className="flex items-center gap-2">
-            <ConnectWallet {...wallet} />
           </div>
         </header>
 
 
 
-        {/* Wallet Linking / Mismatch Prompts */}
-        {publicKey && !profile?.linkedWallet && (
-          <div className="bg-[#ff7a00]/10 border border-[#ff7a00]/25 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-            <div className="flex gap-2.5 items-start">
-              <Wallet className="w-5 h-5 text-[#ff7a00] shrink-0 mt-0.5" />
-              <div>
-                <h4 className="text-sm font-bold text-white">Link Your Wallet</h4>
-                <p className="text-xs text-gray-400 mt-0.5 leading-relaxed">
-                  Link your connected wallet <span className="font-mono text-[#ffc700]">{publicKey.slice(0, 6)}...{publicKey.slice(-6)}</span> to your merchant account to sync your products and sales receipts to the cloud.
-                </p>
-              </div>
-            </div>
-            <button
-              onClick={handleLinkWallet}
-              className="bg-[#ff7a00] hover:bg-[#e06b00] text-white text-xs font-bold py-2 px-4 rounded-xl shrink-0 transition"
-            >
-              Link Connected Wallet
-            </button>
-          </div>
-        )}
-
-        {publicKey && profile?.linkedWallet && publicKey !== profile.linkedWallet && (
+        {/* Wallet Mismatch Prompts */}
+        {publicKey && user && publicKey !== user.uid && (
           <div className="bg-[#ffc700]/10 border border-[#ffc700]/25 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div className="flex gap-2.5 items-start">
               <AlertCircle className="w-5 h-5 text-[#ffc700] shrink-0 mt-0.5" />
               <div>
                 <h4 className="text-sm font-bold text-white">Wallet Address Mismatch</h4>
                 <p className="text-xs text-gray-400 mt-0.5 leading-relaxed">
-                  Your connected wallet (<span className="font-mono text-[#ffc700]">{publicKey.slice(0, 6)}...{publicKey.slice(-6)}</span>) is different from your linked merchant wallet (<span className="font-mono text-white">{profile.linkedWallet.slice(0, 6)}...{profile.linkedWallet.slice(-6)}</span>).
+                  Your connected extension wallet (<span className="font-mono text-[#ffc700]">{publicKey.slice(0, 6)}...{publicKey.slice(-6)}</span>) is different from your logged-in merchant account (<span className="font-mono text-white">{user.uid.slice(0, 6)}...{user.uid.slice(-6)}</span>). Please sign out and sign in with the correct wallet to manage this store.
                 </p>
               </div>
             </div>
             <button
-              onClick={() => {
-                setConfirmModal({
-                  isOpen: true,
-                  title: 'Update Linked Wallet Address',
-                  message: 'Are you sure you want to update your linked wallet? This will associate all your products, inventory, and new sales receipts with this new wallet address.',
-                  confirmText: 'Update Wallet',
-                  cancelText: 'Cancel',
-                  type: 'warning',
-                  onConfirm: handleLinkWallet,
-                });
-              }}
+              onClick={() => logOut().then(() => router.push('/'))}
               className="bg-[#ffc700] hover:bg-[#e0b000] text-[#070a0e] text-xs font-bold py-2 px-4 rounded-xl shrink-0 transition"
             >
-              Update Linked Wallet
+              Sign Out
             </button>
           </div>
         )}
@@ -671,13 +626,12 @@ export default function MerchantPage() {
         onClose={() => setConfirmModal((prev) => ({ ...prev, isOpen: false }))}
       />
       <LoadingOverlay
-        isOpen={registering || deregistering || syncing || funding || linkingWallet}
+        isOpen={registering || deregistering || syncing || funding}
         message={
           registering ? "Registering your store on the Soroban ledger..." :
           deregistering ? "Removing your store from the registry..." :
           syncing ? "Syncing your store data with the database..." :
           funding ? "Requesting 10,000 Testnet XLM from Friendbot..." :
-          linkingWallet ? "Linking your wallet to your merchant profile..." :
           "Processing, please wait..."
         }
       />

@@ -6,13 +6,10 @@ import { useAuth } from '@/context/AuthContext';
 import { useWallet } from '@/hooks/useWallet';
 import { fetchBalances, Balances } from '@/lib/balances';
 import { useToast } from '@/components/ui/Toast';
-import ConnectWallet from '@/components/ConnectWallet';
 import LoadingOverlay from '@/components/ui/LoadingOverlay';
-import ConfirmationModal from '@/components/ui/ConfirmationModal';
 import {
   ArrowLeft,
   User as UserIcon,
-  Mail,
   Calendar,
   Shield,
   Wallet,
@@ -21,16 +18,14 @@ import {
   Save,
   RefreshCw,
   AlertTriangle,
-  CheckCircle2,
-  Eye,
-  EyeOff
+  CheckCircle2
 } from 'lucide-react';
 
 export default function ProfilePage() {
   const router = useRouter();
-  const { user, profile, loading: authLoading, updateProfileDetails, unlinkWalletAddress, deleteUserAccount } = useAuth();
+  const { user, profile, loading: authLoading, updateProfileDetails, deleteUserAccount, logOut } = useAuth();
   const wallet = useWallet();
-  const { publicKey, connect, connecting } = wallet;
+  const { publicKey } = wallet;
   const { success: showToastSuccess, error: showToastError } = useToast();
 
   // Full Name State
@@ -42,10 +37,7 @@ export default function ProfilePage() {
   const [loadingBalances, setLoadingBalances] = useState(false);
 
   // Modal States
-  const [isUnlinkModalOpen, setIsUnlinkModalOpen] = useState(false);
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
-  const [deletePassword, setDeletePassword] = useState('');
-  const [showPassword, setShowPassword] = useState(false);
   const [deletingAccount, setDeletingAccount] = useState(false);
 
   // Sync state with profile
@@ -77,15 +69,15 @@ export default function ProfilePage() {
     }
   }, [showToastError]);
 
-  // Fetch balances when linked wallet changes
+  // Fetch balances when user address is resolved
   useEffect(() => {
-    if (profile?.linkedWallet) {
+    if (user?.uid) {
       // eslint-disable-next-line react-hooks/set-state-in-effect
-      getBalances(profile.linkedWallet);
+      getBalances(user.uid);
     } else {
       setBalances(null);
     }
-  }, [profile?.linkedWallet, getBalances]);
+  }, [user?.uid, getBalances]);
 
   // Handle Full Name Save
   const handleSaveName = async (e: React.FormEvent) => {
@@ -104,68 +96,19 @@ export default function ProfilePage() {
     }
   };
 
-  // Handle Wallet Link/Update
-  const [linkingWallet, setLinkingWallet] = useState(false);
-  const handleLinkWallet = async () => {
-    if (!publicKey) return;
-    setLinkingWallet(true);
-    try {
-      await updateProfileDetails(profile?.fullName || ''); // ensure name is set
-      const { doc, getDoc, updateDoc } = await import('firebase/firestore');
-      const { db } = await import('@/lib/firebase');
-      
-      // Link address
-      const userDocRef = doc(db, 'users', user!.uid);
-      await updateDoc(userDocRef, {
-        linkedWallet: publicKey,
-      });
-
-      // Sync name to stores collection
-      const storeDocRef = doc(db, 'stores', publicKey);
-      const storeSnap = await getDoc(storeDocRef);
-      if (storeSnap.exists()) {
-        await updateDoc(storeDocRef, {
-          ownerName: profile?.fullName || user?.email?.split('@')[0] || 'Unknown',
-        });
-      }
-      
-      showToastSuccess('Wallet linked to profile successfully.');
-    } catch (err) {
-      console.error(err);
-      showToastError('Failed to link wallet address.');
-    } finally {
-      setLinkingWallet(false);
-    }
-  };
-
-  // Handle Wallet Unlink
-  const handleUnlinkWallet = async () => {
-    try {
-      await unlinkWalletAddress();
-      showToastSuccess('Wallet unlinked from profile.');
-    } catch (err) {
-      console.error(err);
-      showToastError('Failed to unlink wallet.');
-    }
-  };
-
   // Handle Account Deletion
-  const handleDeleteAccount = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!deletePassword) {
-      showToastError('Password is required to delete your account.');
-      return;
-    }
-
+  const handleDeleteAccount = async () => {
     setDeletingAccount(true);
     try {
-      await deleteUserAccount(deletePassword);
+      await deleteUserAccount();
       showToastSuccess('Your account has been deleted permanently.');
       setIsDeleteModalOpen(false);
-      router.push('/');
+      
+      // Force logOut and redirect to home
+      logOut().then(() => router.push('/'));
     } catch (err) {
       console.error(err);
-      showToastError(err instanceof Error ? err.message : 'Deletion failed. Check your password and try again.');
+      showToastError(err instanceof Error ? err.message : 'Deletion failed.');
       setDeletingAccount(false);
     }
   };
@@ -179,12 +122,6 @@ export default function ProfilePage() {
       month: 'long',
       day: 'numeric',
     });
-  };
-
-  // Shorten wallet addresses
-  const formatAddress = (address: string) => {
-    if (!address) return '';
-    return `${address.slice(0, 6)}...${address.slice(-6)}`;
   };
 
   if (authLoading || !user) {
@@ -228,7 +165,6 @@ export default function ProfilePage() {
           </div>
 
           <div className="flex items-center gap-2">
-            <ConnectWallet {...wallet} />
           </div>
         </header>
 
@@ -242,7 +178,7 @@ export default function ProfilePage() {
             {/* Avatar & Role */}
             <div className="flex items-center gap-4 border-b border-white/5 pb-4">
               <div className="w-16 h-16 rounded-2xl bg-linear-to-tr from-[#ff7a00] to-[#00f0ff] flex items-center justify-center text-white text-xl font-extrabold shadow-lg">
-                {profile?.fullName ? profile.fullName.slice(0, 2).toUpperCase() : user.email?.slice(0, 2).toUpperCase() || 'U'}
+                {profile?.fullName ? profile.fullName.slice(0, 2).toUpperCase() : user.uid.slice(0, 2).toUpperCase()}
               </div>
               <div className="flex flex-col">
                 <span className="text-base font-bold text-white">{profile?.fullName || 'Full Name'}</span>
@@ -286,18 +222,6 @@ export default function ProfilePage() {
 
               <div className="flex flex-col gap-1.5">
                 <label className="text-[11px] text-gray-400 font-medium flex items-center gap-1">
-                  <Mail className="w-3.5 h-3.5" /> Email Address
-                </label>
-                <input
-                  type="email"
-                  value={profile?.email || user.email || ''}
-                  className="bg-[#161c24]/50 border border-white/5 rounded-xl p-3 text-xs text-gray-500 outline-none cursor-not-allowed"
-                  disabled
-                />
-              </div>
-
-              <div className="flex flex-col gap-1.5">
-                <label className="text-[11px] text-gray-400 font-medium flex items-center gap-1">
                   <Calendar className="w-3.5 h-3.5" /> Account Created
                 </label>
                 <div className="bg-[#161c24]/50 border border-white/5 rounded-xl p-3 text-xs text-gray-500 flex items-center gap-2">
@@ -308,156 +232,86 @@ export default function ProfilePage() {
           </div>
 
           {/* STELLAR WALLET CARD */}
-          <div className="glass rounded-3xl p-6 border border-card-border flex flex-col gap-5 justify-between">
-            <div className="flex flex-col gap-5">
-              <h2 className="text-base font-bold text-white flex items-center gap-2">
-                <Wallet className="w-4 h-4 text-[#00f0ff]" /> Stellar Integration
-              </h2>
+          <div className="glass rounded-3xl p-6 border border-card-border flex flex-col gap-5">
+            <h2 className="text-base font-bold text-white flex items-center gap-2">
+              <Wallet className="w-4 h-4 text-[#00f0ff]" /> Stellar Wallet Status
+            </h2>
 
-              {/* Linked Wallet Details */}
-              {profile?.linkedWallet ? (
-                <div className="flex flex-col gap-4">
-                  <div className="p-4 rounded-2xl bg-white/5 border border-white/5 flex flex-col gap-2 relative">
-                    <div className="flex items-center justify-between">
-                      <span className="text-[10px] text-gray-400 font-semibold tracking-wider uppercase">Linked Public Key</span>
-                      {publicKey === profile.linkedWallet ? (
-                        <span className="bg-[#00c853]/15 border border-[#00c853]/35 text-[#00c853] text-[9px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1">
-                          <CheckCircle2 className="w-2.5 h-2.5" /> Verified Connected
-                        </span>
-                      ) : (
-                        <span className="bg-[#ffc700]/15 border border-[#ffc700]/35 text-[#ffc700] text-[9px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1">
-                          <AlertTriangle className="w-2.5 h-2.5" /> Mismatched/Disconnected
-                        </span>
-                      )}
-                    </div>
-                    <span className="font-mono text-xs text-white break-all mt-1">
-                      {profile.linkedWallet}
+            {/* Wallet details */}
+            <div className="flex flex-col gap-4">
+              <div className="p-4 rounded-2xl bg-white/5 border border-white/5 flex flex-col gap-2 relative">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] text-gray-400 font-semibold tracking-wider uppercase">Active Wallet Identity</span>
+                  {publicKey === user.uid ? (
+                    <span className="bg-[#00c853]/15 border border-[#00c853]/35 text-[#00c853] text-[9px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1">
+                      <CheckCircle2 className="w-2.5 h-2.5" /> Active Login
                     </span>
-                    <div className="flex items-center gap-3 mt-1 text-[10px]">
-                      <a
-                        href={`https://stellar.expert/explorer/testnet/account/${profile.linkedWallet}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-[#00f0ff] hover:underline"
-                      >
-                        View on StellarExpert
-                      </a>
-                    </div>
-                  </div>
-
-                  {/* Blockchain Balances */}
-                  <div className="p-4 rounded-2xl bg-[#161c24]/50 border border-white/5 flex flex-col gap-3">
-                    <div className="flex items-center justify-between text-xs text-gray-400 font-medium">
-                      <span>Blockchain Balances</span>
-                      <button
-                        onClick={() => getBalances(profile.linkedWallet!)}
-                        disabled={loadingBalances}
-                        className="text-gray-500 hover:text-white transition flex items-center gap-1.5 cursor-pointer"
-                        title="Reload balances"
-                      >
-                        <RefreshCw className={`w-3 h-3 ${loadingBalances ? 'animate-spin' : ''}`} />
-                        Refresh
-                      </button>
-                    </div>
-
-                    {loadingBalances ? (
-                      <div className="py-4 flex items-center justify-center gap-2 text-gray-500 text-xs">
-                        <Loader2 className="w-4 h-4 animate-spin text-[#ff7a00]" /> Loading...
-                      </div>
-                    ) : balances ? (
-                      <div className="grid grid-cols-2 gap-4">
-                        <div className="flex flex-col bg-black/20 rounded-xl p-3 border border-white/5">
-                          <span className="text-[10px] text-gray-500 font-bold uppercase">XLM Balance</span>
-                          <span className="text-base font-extrabold text-white mt-1 font-mono">
-                            {balances.xlm} <span className="text-[10px] font-sans font-normal text-gray-400">XLM</span>
-                          </span>
-                        </div>
-                        <div className="flex flex-col bg-black/20 rounded-xl p-3 border border-white/5">
-                          <span className="text-[10px] text-gray-500 font-bold uppercase">USDC Balance</span>
-                          <span className="text-base font-extrabold text-white mt-1 font-mono">
-                            {balances.usdc} <span className="text-[10px] font-sans font-normal text-gray-400">USDC</span>
-                          </span>
-                        </div>
-                      </div>
-                    ) : (
-                      <span className="text-xs text-gray-500 italic">No blockchain data loaded. Click Refresh to query Horizon.</span>
-                    )}
-                  </div>
+                  ) : (
+                    <span className="bg-[#ffc700]/15 border border-[#ffc700]/35 text-[#ffc700] text-[9px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1">
+                      <AlertTriangle className="w-2.5 h-2.5" /> Extension Mismatch
+                    </span>
+                  )}
                 </div>
-              ) : (
-                <div className="p-6 text-center bg-white/5 border border-white/5 rounded-2xl flex flex-col items-center gap-3">
-                  <div className="w-10 h-10 rounded-full bg-[#ffc700]/10 border border-[#ffc700]/20 flex items-center justify-center text-[#ffc700]">
-                    <Wallet className="w-5 h-5 animate-pulse" />
-                  </div>
-                  <div>
-                    <h4 className="text-xs font-bold text-white">No Wallet Linked</h4>
-                    <p className="text-[10px] text-gray-400 mt-1 max-w-[220px] mx-auto leading-relaxed">
-                      Link your Stellar public key to accept payments as a merchant or verify transactions as a client.
-                    </p>
-                  </div>
+                <span className="font-mono text-xs text-white break-all mt-1">
+                  {user.uid}
+                </span>
+                <div className="flex items-center gap-3 mt-1 text-[10px]">
+                  <a
+                    href={`https://stellar.expert/explorer/testnet/account/${user.uid}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-[#00f0ff] hover:underline"
+                  >
+                    View on StellarExpert
+                  </a>
+                </div>
+              </div>
+
+              {/* Wallet mismatches */}
+              {publicKey && publicKey !== user.uid && (
+                <div className="p-3 bg-[#ffc700]/10 border border-[#ffc700]/20 text-[#ffc700] rounded-xl text-[10px] leading-relaxed">
+                  <strong>Freighter Extension Account:</strong> Your extension is currently set to account <span className="font-mono">{publicKey.slice(0, 6)}...{publicKey.slice(-6)}</span>. You are logged into profile <span className="font-mono">{user.uid.slice(0, 6)}...{user.uid.slice(-6)}</span>. Sign out and sign in with the new address to switch profiles.
                 </div>
               )}
-            </div>
 
-            {/* Wallet Action Button Footer */}
-            <div className="mt-5 border-t border-white/5 pt-4">
-              {profile?.linkedWallet ? (
-                <div className="flex flex-col gap-3">
-                  {publicKey && publicKey !== profile.linkedWallet && (
-                    <button
-                      onClick={handleLinkWallet}
-                      disabled={linkingWallet}
-                      className="w-full bg-[#ffc700] hover:bg-[#e0b000] text-[#070a0e] text-xs font-bold py-2.5 px-4 rounded-xl transition flex items-center justify-center gap-1.5"
-                    >
-                      {linkingWallet ? (
-                        <>
-                          <Loader2 className="w-4 h-4 animate-spin" /> Updating...
-                        </>
-                      ) : (
-                        'Update Link to Connected Wallet'
-                      )}
-                    </button>
-                  )}
+              {/* Blockchain Balances */}
+              <div className="p-4 rounded-2xl bg-[#161c24]/50 border border-white/5 flex flex-col gap-3">
+                <div className="flex items-center justify-between text-xs text-gray-400 font-medium">
+                  <span>On-Chain Balances</span>
                   <button
-                    onClick={() => setIsUnlinkModalOpen(true)}
-                    className="w-full bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 font-bold text-xs py-2.5 px-4 rounded-xl transition cursor-pointer"
+                    onClick={() => getBalances(user.uid)}
+                    disabled={loadingBalances}
+                    className="text-gray-500 hover:text-white transition flex items-center gap-1.5 cursor-pointer"
+                    title="Reload balances"
                   >
-                    Unlink Wallet Address
+                    <RefreshCw className={`w-3 h-3 ${loadingBalances ? 'animate-spin' : ''}`} />
+                    Refresh
                   </button>
                 </div>
-              ) : (
-                <div className="w-full">
-                  {publicKey ? (
-                    <button
-                      onClick={handleLinkWallet}
-                      disabled={linkingWallet}
-                      className="w-full bg-[#00f0ff] hover:bg-[#00c5d1] text-black font-extrabold text-xs py-2.5 px-4 rounded-xl transition flex items-center justify-center gap-1.5"
-                    >
-                      {linkingWallet ? (
-                        <Loader2 className="w-4 h-4 animate-spin" />
-                      ) : (
-                        <>
-                          <Wallet className="w-4 h-4" /> Link Connected Wallet ({formatAddress(publicKey)})
-                        </>
-                      )}
-                    </button>
-                  ) : (
-                    <button
-                      onClick={connect}
-                      disabled={connecting}
-                      className="w-full bg-[#ff7a00] hover:bg-[#e06b00] disabled:bg-gray-800 text-white font-bold py-2.5 px-4 rounded-xl transition flex items-center justify-center gap-1.5 text-xs shadow-lg shadow-[#ff7a00]/10"
-                    >
-                      {connecting ? (
-                        <Loader2 className="w-4 h-4 animate-spin" />
-                      ) : (
-                        <>
-                          <Wallet className="w-4 h-4" /> Connect Freighter Wallet
-                        </>
-                      )}
-                    </button>
-                  )}
-                </div>
-              )}
+
+                {loadingBalances ? (
+                  <div className="py-4 flex items-center justify-center gap-2 text-gray-500 text-xs">
+                    <Loader2 className="w-4 h-4 animate-spin text-[#ff7a00]" /> Loading...
+                  </div>
+                ) : balances ? (
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="flex flex-col bg-black/20 rounded-xl p-3 border border-white/5">
+                      <span className="text-[10px] text-gray-500 font-bold uppercase">XLM Balance</span>
+                      <span className="text-base font-extrabold text-white mt-1 font-mono">
+                        {balances.xlm} <span className="text-[10px] font-sans font-normal text-gray-400">XLM</span>
+                      </span>
+                    </div>
+                    <div className="flex flex-col bg-black/20 rounded-xl p-3 border border-white/5">
+                      <span className="text-[10px] text-gray-500 font-bold uppercase">USDC Balance</span>
+                      <span className="text-base font-extrabold text-white mt-1 font-mono">
+                        {balances.usdc} <span className="text-[10px] font-sans font-normal text-gray-400">USDC</span>
+                      </span>
+                    </div>
+                  </div>
+                ) : (
+                  <span className="text-xs text-gray-500 italic">No blockchain data loaded. Click Refresh to query Horizon.</span>
+                )}
+              </div>
             </div>
           </div>
         </div>
@@ -477,29 +331,16 @@ export default function ProfilePage() {
           </div>
           <button
             onClick={() => {
-              setDeletePassword('');
               setIsDeleteModalOpen(true);
             }}
-            className="bg-rose-500 hover:bg-rose-600 text-white text-xs font-bold py-2.5 px-4 rounded-xl shrink-0 transition flex items-center gap-1.5 self-start sm:self-center"
+            className="bg-rose-500 hover:bg-rose-600 text-white text-xs font-bold py-2.5 px-4 rounded-xl shrink-0 transition flex items-center gap-1.5 self-start sm:self-center cursor-pointer"
           >
             <Trash2 className="w-4 h-4" /> Delete Account
           </button>
         </div>
       </div>
 
-      {/* CONFIRM UNLINK MODAL */}
-      <ConfirmationModal
-        isOpen={isUnlinkModalOpen}
-        title="Unlink Wallet Address"
-        message="Are you sure you want to unlink your wallet? This will stop cloud synchronization of products, POS configurations, and receipts. You can link a wallet again at any time."
-        confirmText="Unlink Wallet"
-        cancelText="Keep Linked"
-        type="warning"
-        onConfirm={handleUnlinkWallet}
-        onClose={() => setIsUnlinkModalOpen(false)}
-      />
-
-      {/* SECURE DELETE ACCOUNT MODAL WITH PASSWORD */}
+      {/* SECURE DELETE ACCOUNT MODAL */}
       {isDeleteModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 overflow-y-auto">
           {/* Backdrop */}
@@ -539,73 +380,47 @@ export default function ProfilePage() {
                 )}
               </ul>
 
-              {profile?.role === 'merchant' && profile.linkedWallet && (
+              {profile?.role === 'merchant' && (
                 <div className="p-3 bg-amber-500/10 border border-amber-500/20 text-amber-400 rounded-xl text-[11px] mt-1">
                   <strong>Notice to Merchant:</strong> Deleting your account will **not** deregister your store from the decentralized Stellar blockchain. We recommend deregistering your store on-chain first.
                 </div>
               )}
             </div>
 
-            <form onSubmit={handleDeleteAccount} className="flex flex-col gap-4 mt-2">
-              <div className="flex flex-col gap-1.5">
-                <label className="text-[11px] text-gray-400 font-semibold">Confirm Password</label>
-                <div className="relative">
-                  <input
-                    type={showPassword ? 'text' : 'password'}
-                    placeholder="Enter your password to verify"
-                    value={deletePassword}
-                    onChange={(e) => setDeletePassword(e.target.value)}
-                    className="w-full bg-[#161c24] border border-card-border rounded-xl py-3 pl-3 pr-10 text-xs text-white placeholder-gray-600 outline-none focus:border-rose-500 transition"
-                    required
-                    disabled={deletingAccount}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowPassword(!showPassword)}
-                    className="absolute right-3.5 top-3 text-gray-500 hover:text-white"
-                    tabIndex={-1}
-                  >
-                    {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                  </button>
-                </div>
-              </div>
-
-              <div className="flex gap-3 mt-2 justify-end border-t border-white/5 pt-4">
-                <button
-                  type="button"
-                  onClick={() => setIsDeleteModalOpen(false)}
-                  disabled={deletingAccount}
-                  className="px-4 py-2.5 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 text-white text-xs font-bold transition duration-150 disabled:opacity-50"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={deletingAccount}
-                  className="px-4 py-2.5 rounded-xl bg-rose-500 hover:bg-rose-600 text-white text-xs font-bold transition duration-150 disabled:opacity-50 flex items-center justify-center gap-1.5 cursor-pointer"
-                >
-                  {deletingAccount ? (
-                    <>
-                      <Loader2 className="w-3.5 h-3.5 animate-spin" /> Deleting...
-                    </>
-                  ) : (
-                    <>
-                      <Trash2 className="w-3.5 h-3.5" /> Permanently Delete
-                    </>
-                  )}
-                </button>
-              </div>
-            </form>
+            <div className="flex gap-3 mt-2 justify-end border-t border-white/5 pt-4">
+              <button
+                type="button"
+                onClick={() => setIsDeleteModalOpen(false)}
+                disabled={deletingAccount}
+                className="px-4 py-2.5 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 text-white text-xs font-bold transition duration-150 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleDeleteAccount}
+                disabled={deletingAccount}
+                className="px-4 py-2.5 rounded-xl bg-rose-500 hover:bg-rose-600 text-white text-xs font-bold transition duration-150 disabled:opacity-50 flex items-center justify-center gap-1.5 cursor-pointer"
+              >
+                {deletingAccount ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" /> Deleting...
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="w-3.5 h-3.5" /> Permanently Delete
+                  </>
+                )}
+              </button>
+            </div>
           </div>
         </div>
       )}
 
       {/* OVERLAY LOADER */}
       <LoadingOverlay
-        isOpen={savingName || linkingWallet || deletingAccount}
+        isOpen={savingName || deletingAccount}
         message={
           savingName ? 'Saving your updated profile details...' :
-          linkingWallet ? 'Linking your Stellar wallet to your profile...' :
           deletingAccount ? 'Recursively deleting all documents and credentials...' :
           'Processing, please wait...'
         }

@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.syncStoreOnDemand = exports.syncStores = void 0;
+exports.verifyAuthChallenge = exports.getAuthChallenge = exports.syncStoreOnDemand = exports.syncStores = void 0;
 const scheduler_1 = require("firebase-functions/v2/scheduler");
 const https_1 = require("firebase-functions/v2/https");
 const v2_1 = require("firebase-functions/v2");
@@ -183,6 +183,118 @@ exports.syncStoreOnDemand = (0, https_1.onRequest)(async (req, res) => {
     catch (error) {
         console.error('Error during on-demand store sync:', error);
         res.status(500).json({ error: 'Internal Server Error' });
+    }
+});
+/**
+ * Endpoint to generate a random challenge nonce and wrap it in an unsigned mock transaction XDR
+ */
+exports.getAuthChallenge = (0, https_1.onRequest)(async (req, res) => {
+    // Handle CORS
+    res.set('Access-Control-Allow-Origin', '*');
+    if (req.method === 'OPTIONS') {
+        res.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+        res.set('Access-Control-Allow-Headers', 'Content-Type');
+        res.status(204).send('');
+        return;
+    }
+    try {
+        const { walletAddress } = req.body;
+        if (!walletAddress) {
+            res.status(400).json({ error: 'Missing walletAddress' });
+            return;
+        }
+        // 1. Generate challenge nonce
+        const nonce = Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+        const expiresAt = Date.now() + 5 * 60 * 1000; // 5 minutes
+        // 2. Save challenge in Firestore
+        await db.doc(`challenges/${walletAddress}`).set({
+            nonce,
+            expiresAt,
+        });
+        // 3. Build offline unsigned Stellar Transaction
+        const account = new stellar_sdk_1.Account(walletAddress, '0');
+        const tx = new stellar_sdk_1.TransactionBuilder(account, {
+            fee: '100',
+            networkPassphrase: 'Test SDF Network ; September 2015',
+        })
+            .addMemo(stellar_sdk_1.Memo.text(nonce))
+            .addOperation(stellar_sdk_1.Operation.bumpSequence({ bumpTo: '1' }))
+            .setTimeout(300) // 5 minutes
+            .build();
+        const unsignedXdr = tx.toXDR();
+        res.status(200).json({ success: true, nonce, unsignedXdr });
+    }
+    catch (error) {
+        console.error('Error generating challenge:', error);
+        res.status(500).json({ error: 'Internal Server Error' });
+    }
+});
+/**
+ * Endpoint to verify signed XDR challenge and issue a Firebase Custom Auth token
+ */
+exports.verifyAuthChallenge = (0, https_1.onRequest)(async (req, res) => {
+    var _a;
+    // Handle CORS
+    res.set('Access-Control-Allow-Origin', '*');
+    if (req.method === 'OPTIONS') {
+        res.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+        res.set('Access-Control-Allow-Headers', 'Content-Type');
+        res.status(204).send('');
+        return;
+    }
+    try {
+        const { signedXdr, walletAddress } = req.body;
+        if (!signedXdr || !walletAddress) {
+            res.status(400).json({ error: 'Missing signedXdr or walletAddress' });
+            return;
+        }
+        // 1. Retrieve the stored challenge
+        const challengeRef = db.doc(`challenges/${walletAddress}`);
+        const challengeSnap = await challengeRef.get();
+        if (!challengeSnap.exists) {
+            res.status(400).json({ error: 'Challenge not found. Please request login again.' });
+            return;
+        }
+        const { nonce, expiresAt } = challengeSnap.data();
+        if (Date.now() > expiresAt) {
+            await challengeRef.delete();
+            res.status(400).json({ error: 'Challenge expired. Please request login again.' });
+            return;
+        }
+        // 2. Decode the transaction and check parameters
+        const tx = stellar_sdk_1.TransactionBuilder.fromXDR(signedXdr, 'Test SDF Network ; September 2015');
+        // 3. Verify memo contains the correct nonce
+        const txMemo = (_a = tx.memo.value) === null || _a === void 0 ? void 0 : _a.toString();
+        if (txMemo !== nonce) {
+            res.status(400).json({ error: 'Invalid challenge memo.' });
+            return;
+        }
+        // 4. Verify transaction signature
+        const keypair = stellar_sdk_1.Keypair.fromPublicKey(walletAddress);
+        let verified = false;
+        for (const sig of tx.signatures) {
+            if (keypair.verify(tx.hash(), sig.signature())) {
+                verified = true;
+                break;
+            }
+        }
+        if (!verified) {
+            res.status(400).json({ error: 'Invalid signature for this wallet address.' });
+            return;
+        }
+        // 5. Cleanup challenge
+        await challengeRef.delete();
+        // 6. Create custom token
+        const customToken = await (0, auth_1.getAuth)().createCustomToken(walletAddress);
+        res.status(200).json({ success: true, customToken });
+    }
+    catch (error) {
+        console.error('Error verifying challenge:', error);
+        res.status(500).json({
+            error: 'Internal Server Error',
+            details: error instanceof Error ? error.message : String(error),
+            stack: error instanceof Error ? error.stack : undefined
+        });
     }
 });
 //# sourceMappingURL=index.js.map

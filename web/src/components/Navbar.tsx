@@ -64,9 +64,13 @@ export default function Navbar() {
   };
 
   const getUserInitials = () => {
-    const email = profile?.email || user?.email;
-    if (!email) return 'U';
-    return email.substring(0, 2).toUpperCase();
+    if (profile?.fullName) {
+      return profile.fullName.substring(0, 2).toUpperCase();
+    }
+    if (user?.uid) {
+      return user.uid.substring(0, 2).toUpperCase();
+    }
+    return 'U';
   };
 
   return (
@@ -119,7 +123,7 @@ export default function Navbar() {
                   </div>
                   <div className="flex flex-col pr-1">
                     <span className="text-[10px] text-gray-400 font-bold max-w-[100px] truncate leading-tight">
-                      {profile?.email || user?.email}
+                      {profile?.fullName || (user?.uid ? `${user.uid.slice(0, 6)}...${user.uid.slice(-6)}` : 'Loading...')}
                     </span>
                     <span className="text-[8px] text-[#00f0ff] uppercase tracking-widest font-extrabold leading-none mt-0.5">
                       {loading ? 'Loading...' : (profile?.role === 'merchant' ? 'Store Owner' : 'Customer')}
@@ -141,8 +145,10 @@ export default function Navbar() {
                         className="absolute right-0 mt-2 w-56 rounded-2xl glass border-white/5 p-2 shadow-2xl z-20 flex flex-col gap-1"
                       >
                         <div className="px-3 py-2 border-b border-white/5 mb-1 text-left">
-                          <p className="text-[10px] text-gray-500 font-bold uppercase tracking-wider">Account</p>
-                          <p className="text-xs text-white truncate font-medium mt-0.5">{profile?.email}</p>
+                          <p className="text-[10px] text-gray-500 font-bold uppercase tracking-wider">Stellar Address</p>
+                          <p className="text-xs text-white truncate font-medium mt-0.5 font-mono">
+                            {user?.uid ? `${user.uid.slice(0, 8)}...${user.uid.slice(-8)}` : ''}
+                          </p>
                         </div>
                         
                         <Link
@@ -232,7 +238,9 @@ export default function Navbar() {
                       {getUserInitials()}
                     </div>
                     <div className="flex flex-col min-w-0">
-                      <span className="text-xs text-white truncate font-medium leading-tight">{profile?.email || user?.email}</span>
+                      <span className="text-xs text-white truncate font-medium leading-tight">
+                        {profile?.fullName || (user?.uid ? `${user.uid.slice(0, 6)}...${user.uid.slice(-6)}` : 'Loading...')}
+                      </span>
                       <span className="text-[8px] text-[#00f0ff] uppercase tracking-widest font-extrabold leading-none mt-0.5">
                         {loading ? 'Loading...' : (profile?.role === 'merchant' ? 'Store Owner' : 'Customer')}
                       </span>

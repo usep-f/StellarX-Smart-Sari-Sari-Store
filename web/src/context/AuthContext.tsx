@@ -4,12 +4,8 @@ import React, { createContext, useContext, useEffect, useState } from 'react';
 import { 
   User,
   onAuthStateChanged,
-  signInWithEmailAndPassword,
-  createUserWithEmailAndPassword,
   signOut,
-  deleteUser as firebaseDeleteUser,
-  EmailAuthProvider,
-  reauthenticateWithCredential
+  deleteUser as firebaseDeleteUser
 } from 'firebase/auth';
 import { 
   doc, 
@@ -26,9 +22,9 @@ import {
 import { auth, db } from '@/lib/firebase';
 
 export interface UserProfile {
-  email: string;
+  email: string | null;
   role: 'merchant' | 'customer';
-  linkedWallet: string | null;
+  linkedWallet: string;
   createdAt: number;
   fullName?: string;
 }
@@ -37,16 +33,23 @@ interface AuthContextType {
   user: User | null;
   profile: UserProfile | null;
   loading: boolean;
-  signIn: (email: string, password: string) => Promise<void>;
-  signUp: (email: string, password: string, role: 'merchant' | 'customer', fullName: string) => Promise<void>;
-  logOut: () => Promise<void>;
-  linkWalletAddress: (walletAddress: string) => Promise<void>;
+  signInWithWallet: (walletAddress: string) => Promise<{ isNew: boolean }>;
+  createWalletProfile: (role: 'merchant' | 'customer', fullName: string) => Promise<void>;
   updateProfileDetails: (fullName: string) => Promise<void>;
-  unlinkWalletAddress: () => Promise<void>;
-  deleteUserAccount: (password: string) => Promise<void>;
+  deleteUserAccount: () => Promise<void>;
+  logOut: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
+
+const getFunctionUrl = (name: string) => {
+  const projectId = process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID || 'saristellarx';
+  const region = 'asia-southeast1';
+  const useEmulator = process.env.NEXT_PUBLIC_USE_FUNCTIONS_EMULATOR === 'true';
+  return useEmulator
+    ? `http://127.0.0.1:5001/${projectId}/${region}/${name}`
+    : `https://${region}-${projectId}.cloudfunctions.net/${name}`;
+};
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
@@ -92,66 +95,71 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
-  const signIn = async (email: string, password: string) => {
+  const signInWithWallet = async (walletAddress: string) => {
     setLoading(true);
     try {
-      await signInWithEmailAndPassword(auth, email, password);
-    } catch (error) {
-      setLoading(false);
-      throw error;
-    }
-  };
-
-  const signUp = async (email: string, password: string, role: 'merchant' | 'customer', fullName: string) => {
-    setLoading(true);
-    try {
-      const userCredential = await createUserWithEmailAndPassword(auth, email, password);
-      const newUser = userCredential.user;
-
-      // Create the user profile in Firestore
-      const userProfile: UserProfile = {
-        email,
-        role,
-        fullName,
-        linkedWallet: null,
-        createdAt: Date.now(),
-      };
-
-      await setDoc(doc(db, 'users', newUser.uid), userProfile);
-    } catch (error) {
-      setLoading(false);
-      throw error;
-    }
-  };
-
-  const logOut = async () => {
-    setLoading(true);
-    try {
-      await signOut(auth);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const linkWalletAddress = async (walletAddress: string) => {
-    if (!user) throw new Error('User must be logged in to link a wallet.');
-    const userDocRef = doc(db, 'users', user.uid);
-    await updateDoc(userDocRef, {
-      linkedWallet: walletAddress,
-    });
-
-    // Sync the owner's name to their registered store, if it exists
-    try {
-      const storeDocRef = doc(db, 'stores', walletAddress);
-      const storeSnap = await getDoc(storeDocRef);
-      if (storeSnap.exists()) {
-        await updateDoc(storeDocRef, {
-          ownerName: profile?.fullName || user.email?.split('@')[0] || 'Unknown',
-        });
+      // 1. Get challenge
+      const challengeRes = await fetch(getFunctionUrl('getAuthChallenge'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ walletAddress }),
+      });
+      if (!challengeRes.ok) {
+        throw new Error('Failed to request authentication challenge.');
       }
-    } catch (err) {
-      console.error('Failed to sync owner name to store document:', err);
+      const { unsignedXdr } = await challengeRes.json();
+
+      // 2. Sign with Freighter
+      const freighter = await import('@stellar/freighter-api');
+      const signed = await freighter.signTransaction(unsignedXdr, {
+        networkPassphrase: 'Test SDF Network ; September 2015',
+        address: walletAddress,
+      });
+      if (signed.error) {
+        throw new Error(typeof signed.error === 'string' ? signed.error : 'Signing was rejected by Freighter.');
+      }
+
+      // 3. Verify challenge and get Firebase Custom Token
+      const verifyRes = await fetch(getFunctionUrl('verifyAuthChallenge'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ signedXdr: signed.signedTxXdr, walletAddress }),
+      });
+      if (!verifyRes.ok) {
+        const errData = await verifyRes.json().catch(() => ({}));
+        console.error('verifyAuthChallenge failed:', errData);
+        throw new Error(errData.details || errData.error || 'Verification failed.');
+      }
+      const { customToken } = await verifyRes.json();
+
+      // 4. Sign in to Firebase Auth
+      const { signInWithCustomToken } = await import('firebase/auth');
+      const userCredential = await signInWithCustomToken(auth, customToken);
+      const loggedInUser = userCredential.user;
+
+      // 5. Check if profile exists
+      const userDocRef = doc(db, 'users', loggedInUser.uid);
+      const docSnap = await getDoc(userDocRef);
+
+      return { isNew: !docSnap.exists() };
+    } catch (error) {
+      setLoading(false);
+      throw error;
     }
+  };
+
+  const createWalletProfile = async (role: 'merchant' | 'customer', fullName: string) => {
+    if (!user) throw new Error('User must be logged in to create a profile.');
+    
+    const userProfile: UserProfile = {
+      email: null,
+      role,
+      fullName,
+      linkedWallet: user.uid,
+      createdAt: Date.now(),
+    };
+
+    await setDoc(doc(db, 'users', user.uid), userProfile);
   };
 
   const updateProfileDetails = async (fullName: string) => {
@@ -161,10 +169,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       fullName,
     });
 
-    // Sync the owner's name to their registered store if they have a linked wallet
-    if (profile?.linkedWallet) {
+    // Sync the owner's name to their registered store if they are a merchant
+    if (profile?.role === 'merchant') {
       try {
-        const storeDocRef = doc(db, 'stores', profile.linkedWallet);
+        const storeDocRef = doc(db, 'stores', user.uid);
         const storeSnap = await getDoc(storeDocRef);
         if (storeSnap.exists()) {
           await updateDoc(storeDocRef, {
@@ -177,23 +185,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  const unlinkWalletAddress = async () => {
-    if (!user) throw new Error('User must be logged in to unlink a wallet.');
-    const userDocRef = doc(db, 'users', user.uid);
-    await updateDoc(userDocRef, {
-      linkedWallet: null,
-    });
-  };
-
-  const deleteUserAccount = async (password: string) => {
+  const deleteUserAccount = async () => {
     if (!user) throw new Error('User must be logged in to delete their account.');
-    if (!user.email) throw new Error('User email not found.');
 
-    // 1. Re-authenticate the user first to verify the request
-    const credential = EmailAuthProvider.credential(user.email, password);
-    await reauthenticateWithCredential(user, credential);
-
-    // 2. Cascade delete Firestore data
+    // 1. Cascade delete Firestore data
     const userDocRef = doc(db, 'users', user.uid);
 
     // A. Delete customer purchases
@@ -206,19 +201,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     // B. Delete merchant store items and legacy data
     if (profile?.role === 'merchant') {
-      if (profile.linkedWallet) {
-        // Delete nested products
-        const storeProductsQuery = query(collection(db, 'stores', profile.linkedWallet, 'products'));
-        const storeProductsSnap = await getDocs(storeProductsQuery);
-        const deleteStoreProdsPromises = storeProductsSnap.docs.map((d) => deleteDoc(d.ref));
-        await Promise.all(deleteStoreProdsPromises);
+      // Delete nested products
+      const storeProductsQuery = query(collection(db, 'stores', user.uid, 'products'));
+      const storeProductsSnap = await getDocs(storeProductsQuery);
+      const deleteStoreProdsPromises = storeProductsSnap.docs.map((d) => deleteDoc(d.ref));
+      await Promise.all(deleteStoreProdsPromises);
 
-        // Delete nested receipts
-        const storeReceiptsQuery = query(collection(db, 'stores', profile.linkedWallet, 'receipts'));
-        const storeReceiptsSnap = await getDocs(storeReceiptsQuery);
-        const deleteStoreReceiptsPromises = storeReceiptsSnap.docs.map((d) => deleteDoc(d.ref));
-        await Promise.all(deleteStoreReceiptsPromises);
-      }
+      // Delete nested receipts
+      const storeReceiptsQuery = query(collection(db, 'stores', user.uid, 'receipts'));
+      const storeReceiptsSnap = await getDocs(storeReceiptsQuery);
+      const deleteStoreReceiptsPromises = storeReceiptsSnap.docs.map((d) => deleteDoc(d.ref));
+      await Promise.all(deleteStoreReceiptsPromises);
 
       // Delete legacy products
       const legacyProductsQuery = query(collection(db, 'products'), where('uid', '==', user.uid));
@@ -236,8 +229,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // C. Delete the user profile document itself
     await deleteDoc(userDocRef);
 
-    // 3. Delete from Firebase Authentication
-    await firebaseDeleteUser(user);
+    // 2. Delete from Firebase Authentication
+    try {
+      await firebaseDeleteUser(user);
+    } catch (err: unknown) {
+      if (err && typeof err === 'object' && 'code' in err && err.code === 'auth/requires-recent-login') {
+        throw new Error('Verification required: Please sign in again, then attempt account deletion immediately.');
+      }
+      throw err;
+    }
+  };
+
+  const logOut = async () => {
+    setLoading(true);
+    try {
+      await signOut(auth);
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -246,13 +255,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         user,
         profile,
         loading,
-        signIn,
-        signUp,
-        logOut,
-        linkWalletAddress,
+        signInWithWallet,
+        createWalletProfile,
         updateProfileDetails,
-        unlinkWalletAddress,
         deleteUserAccount,
+        logOut,
       }}
     >
       {children}
