@@ -3,11 +3,43 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     // Web 2.5 Architecture:
-    // All writes are handled securely via Cloud Functions or indexers using the Admin SDK, which bypasses these rules.
     // All reads are public, mirroring the public nature of Web3 on-chain data.
     match /{document=**} {
       allow read: if true;
+    }
+
+    // Users collection: Profiles are managed securely via Cloud Functions using Admin SDK (bypasses rules)
+    match /users/{userId} {
       allow write: if false;
+    }
+
+    // Stores collection: Base store documents are written by the Cloud Function indexer
+    match /stores/{storeId} {
+      allow write: if false;
+
+      // Nested Products collection: written client-side by the merchant
+      match /products/{productId} {
+        allow create, update, delete: if true;
+      }
+
+      // Nested Receipts collection: written client-side by the merchant upon purchase
+      match /receipts/{receiptId} {
+        allow create: if true;
+        allow update, delete: if true;
+      }
+    }
+
+    // Purchases collection: written client-side by the customer when they checkout
+    match /purchases/{purchaseId} {
+      allow create, update, delete: if true;
+    }
+
+    // Legacy/Root collections: allow client-side write to clean up or delete migrated docs
+    match /products/{productId} {
+      allow create, update, delete: if true;
+    }
+    match /receipts/{receiptId} {
+      allow create, update, delete: if true;
     }
   }
 }
