@@ -2,60 +2,44 @@ rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
-    
-    // User profiles: Only the user can read or write their own profile document
-    match /users/{uid} {
+    // Web 2.5 Architecture:
+    // All reads are public, mirroring the public nature of Web3 on-chain data.
+    match /{document=**} {
       allow read: if true;
-      allow write: if request.auth != null && request.auth.uid == uid;
     }
-    
-    // Products: Authenticated users can read (customers scan products), but only the owner merchant can write
-    match /products/{productId} {
-      allow read: if request.auth != null;
-      allow create: if request.auth != null && request.resource.data.uid == request.auth.uid;
-      allow update, delete: if request.auth != null && resource.data.uid == request.auth.uid;
-    }
-    
-    // Receipts: Merchant records the receipt. Accessible by the merchant owner or involved customer.
-    match /receipts/{receiptId} {
-      allow create: if request.auth != null && request.resource.data.uid == request.auth.uid;
-      allow read: if request.auth != null && (
-        resource.data.uid == request.auth.uid || 
-        resource.data.merchantAddress == request.auth.uid // fallback
-      );
-      allow update, delete: if request.auth != null && resource.data.uid == request.auth.uid;
-    }
-    
-    // Purchases: Only the customer who made the purchase can read/write their purchase log
-    match /purchases/{purchaseId} {
-      allow read: if request.auth != null && resource.data.uid == request.auth.uid;
-      allow create: if request.auth != null && request.resource.data.uid == request.auth.uid;
-      allow update, delete: if request.auth != null && resource.data.uid == request.auth.uid;
-    }
-    
-    // Stores: Publicly readable for map discovery. Writes are done exclusively by the Cloud Function indexer.
-    match /stores/{storeId} {
-      allow read: if true;
+
+    // Users collection: Profiles are managed securely via Cloud Functions using Admin SDK (bypasses rules)
+    match /users/{userId} {
       allow write: if false;
-      allow update: if request.auth != null && 
-        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.linkedWallet == storeId;
+    }
 
-      // Nested Products subcollection
+    // Stores collection: Base store documents are written by the Cloud Function indexer
+    match /stores/{storeId} {
+      allow write: if false;
+
+      // Nested Products collection: written client-side by the merchant
       match /products/{productId} {
-        allow read: if request.auth != null;
-        allow create: if request.auth != null && request.resource.data.uid == request.auth.uid;
-        allow update, delete: if request.auth != null && resource.data.uid == request.auth.uid;
+        allow create, update, delete: if true;
       }
 
-      // Nested Receipts subcollection
+      // Nested Receipts collection: written client-side by the merchant upon purchase
       match /receipts/{receiptId} {
-        allow create: if request.auth != null && request.resource.data.uid == request.auth.uid;
-        allow read: if request.auth != null && (
-          resource.data.uid == request.auth.uid || 
-          resource.data.merchantAddress == request.auth.uid // fallback
-        );
-        allow update, delete: if request.auth != null && resource.data.uid == request.auth.uid;
+        allow create: if true;
+        allow update, delete: if true;
       }
+    }
+
+    // Purchases collection: written client-side by the customer when they checkout
+    match /purchases/{purchaseId} {
+      allow create, update, delete: if true;
+    }
+
+    // Legacy/Root collections: allow client-side write to clean up or delete migrated docs
+    match /products/{productId} {
+      allow create, update, delete: if true;
+    }
+    match /receipts/{receiptId} {
+      allow create, update, delete: if true;
     }
   }
 }

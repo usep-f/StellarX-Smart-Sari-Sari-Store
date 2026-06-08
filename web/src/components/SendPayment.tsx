@@ -6,7 +6,7 @@ import {
   pollTransaction,
   type AssetCode,
 } from '@/lib/payment';
-import { NETWORK_PASSPHRASE } from '@/lib/stellar';
+import { useWallet } from '@/hooks/useWallet';
 
 type Status =
   | 'idle'
@@ -41,6 +41,9 @@ export default function SendPayment({
   const [txHash, setTxHash] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
 
+  // We need useWallet to get the signTransaction method
+  const { signTransaction } = useWallet();
+
   const busy = ['building', 'signing', 'submitting', 'polling'].includes(status);
 
   const handleSend = async () => {
@@ -51,19 +54,10 @@ export default function SendPayment({
       const xdr = await buildPaymentXDR(publicKey, destination.trim(), amount, asset);
 
       setStatus('signing');
-      const freighter = await import('@stellar/freighter-api');
-      const signed = await freighter.signTransaction(xdr, {
-        networkPassphrase: NETWORK_PASSPHRASE,
-        address: publicKey,
-      });
-      if (signed.error) {
-        throw new Error(
-          typeof signed.error === 'string' ? signed.error : 'Signing was rejected',
-        );
-      }
+      const signedTxXdr = await signTransaction(xdr);
 
       setStatus('submitting');
-      const hash = await submitSignedXDR(signed.signedTxXdr);
+      const hash = await submitSignedXDR(signedTxXdr);
       setTxHash(hash);
 
       setStatus('polling');

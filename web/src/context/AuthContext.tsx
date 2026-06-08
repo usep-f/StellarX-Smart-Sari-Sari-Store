@@ -2,25 +2,24 @@
 
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { 
-  User,
-  onAuthStateChanged,
-  signInWithEmailAndPassword,
-  createUserWithEmailAndPassword,
-  signOut
-} from 'firebase/auth';
-import { 
   doc, 
-  setDoc, 
-  updateDoc, 
   onSnapshot,
-  getDoc
+  getDoc,
 } from 'firebase/firestore';
-import { auth, db } from '@/lib/firebase';
+import { db } from '@/lib/firebase';
+import { TransactionBuilder, Account, Memo, Operation } from '@stellar/stellar-sdk';
+import { getKit } from '@/lib/wallet';
+import { NETWORK_PASSPHRASE } from '@/lib/stellar';
+import { usePathname } from 'next/navigation';
+
+export interface User {
+  uid: string;
+}
 
 export interface UserProfile {
-  email: string;
+  email: string | null;
   role: 'merchant' | 'customer';
-  linkedWallet: string | null;
+  linkedWallet: string;
   createdAt: number;
   fullName?: string;
 }
@@ -29,118 +28,177 @@ interface AuthContextType {
   user: User | null;
   profile: UserProfile | null;
   loading: boolean;
-  signIn: (email: string, password: string) => Promise<void>;
-  signUp: (email: string, password: string, role: 'merchant' | 'customer', fullName: string) => Promise<void>;
+  signInWithWallet: () => Promise<{ isNew: boolean; publicKey: string }>;
+  createWalletProfile: (role: 'merchant' | 'customer', fullName: string) => Promise<void>;
+  updateProfileDetails: (fullName: string) => Promise<void>;
+  deleteUserAccount: () => Promise<void>;
   logOut: () => Promise<void>;
-  linkWalletAddress: (walletAddress: string) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
+
+const getFunctionUrl = (name: string) => {
+  const projectId = process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID || 'saristellarx';
+  const region = 'asia-southeast1';
+  const useEmulator = process.env.NEXT_PUBLIC_USE_FUNCTIONS_EMULATOR === 'true';
+  return useEmulator
+    ? `http://127.0.0.1:5001/${projectId}/${region}/${name}`
+    : `https://${region}-${projectId}.cloudfunctions.net/${name}`;
+};
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
+  const [sessionRestored, setSessionRestored] = useState(false);
+  const pathname = usePathname();
 
-  // Listen for authentication changes
+  const logOut = async () => {
+    setUser(null);
+    setProfile(null);
+    localStorage.removeItem('activeWallet');
+  };
+
+  // Onboarding/Registration Failsafe:
+  // If the user has connected a wallet but has no profile document, and they navigate away 
+  // from the /auth portal, log them out automatically to prevent a half-logged-in session.
   useEffect(() => {
-    let unsubscribeProfile: (() => void) | undefined;
+    if (!loading && user && !profile && pathname !== '/auth') {
+      const timerId = setTimeout(() => {
+        logOut();
+      }, 0);
+      return () => clearTimeout(timerId);
+    }
+  }, [loading, user, profile, pathname]);
 
-    const unsubscribeAuth = onAuthStateChanged(auth, async (firebaseUser) => {
-      setUser(firebaseUser);
-      
-      if (firebaseUser) {
-        // Setup a real-time listener for the user profile document in Firestore
-        const userDocRef = doc(db, 'users', firebaseUser.uid);
-        
-        unsubscribeProfile = onSnapshot(userDocRef, (docSnap) => {
-          if (docSnap.exists()) {
-            setProfile(docSnap.data() as UserProfile);
-          } else {
-            setProfile(null);
-          }
-          setLoading(false);
-        }, (err) => {
-          console.error('Failed to listen to profile document:', err);
-          setLoading(false);
-        });
-      } else {
-        if (unsubscribeProfile) {
-          unsubscribeProfile();
+  // Restore session from localStorage
+  useEffect(() => {
+    const savedWallet = localStorage.getItem('activeWallet');
+    const timerId = setTimeout(() => {
+      if (savedWallet) {
+        setUser({ uid: savedWallet });
+      }
+      setSessionRestored(true);
+    }, 0);
+    return () => clearTimeout(timerId);
+  }, []);
+
+  // Listen for Firestore profile changes when user is set
+  useEffect(() => {
+    if (!sessionRestored) return;
+
+    let unsubscribeProfile: (() => void) | undefined;
+    let timerId: NodeJS.Timeout | undefined;
+
+    if (user) {
+      const userDocRef = doc(db, 'users', user.uid);
+      unsubscribeProfile = onSnapshot(userDocRef, (docSnap) => {
+        if (docSnap.exists()) {
+          setProfile(docSnap.data() as UserProfile);
+        } else {
+          setProfile(null);
         }
+        setLoading(false);
+      }, (err) => {
+        console.error('Failed to listen to profile document:', err);
+        setLoading(false);
+      });
+    } else {
+      timerId = setTimeout(() => {
         setProfile(null);
         setLoading(false);
-      }
-    });
+      }, 0);
+    }
 
     return () => {
-      unsubscribeAuth();
       if (unsubscribeProfile) {
         unsubscribeProfile();
       }
+      if (timerId) {
+        clearTimeout(timerId);
+      }
     };
-  }, []);
+  }, [user, sessionRestored]);
 
-  const signIn = async (email: string, password: string) => {
-    setLoading(true);
-    try {
-      await signInWithEmailAndPassword(auth, email, password);
-    } catch (error) {
-      setLoading(false);
-      throw error;
-    }
-  };
+  /** Helper to sign a payload and send it to a secure cloud function */
+  const sendSecurePayload = async (functionName: string, action: string, data?: Record<string, unknown>) => {
+    if (!user) throw new Error('Not logged in');
+    const kit = getKit();
+    if (!kit) throw new Error('Wallet kit not initialized');
 
-  const signUp = async (email: string, password: string, role: 'merchant' | 'customer', fullName: string) => {
-    setLoading(true);
-    try {
-      const userCredential = await createUserWithEmailAndPassword(auth, email, password);
-      const newUser = userCredential.user;
+    const payload = {
+      walletAddress: user.uid,
+      timestamp: Date.now(),
+      action,
+      data
+    };
 
-      // Create the user profile in Firestore
-      const userProfile: UserProfile = {
-        email,
-        role,
-        fullName,
-        linkedWallet: null,
-        createdAt: Date.now(),
-      };
+    // Hash the payload
+    const payloadStr = JSON.stringify(payload);
+    const hashBuffer = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(payloadStr) as unknown as BufferSource);
 
-      await setDoc(doc(db, 'users', newUser.uid), userProfile);
-    } catch (error) {
-      setLoading(false);
-      throw error;
-    }
-  };
+    // Build the transaction
+    const tx = new TransactionBuilder(new Account(user.uid, '0'), {
+      fee: '100',
+      networkPassphrase: NETWORK_PASSPHRASE,
+    })
+      .addMemo(Memo.hash(Buffer.from(hashBuffer)))
+      .addOperation(Operation.bumpSequence({ bumpTo: '1' }))
+      .setTimeout(300)
+      .build();
 
-  const logOut = async () => {
-    setLoading(true);
-    try {
-      await signOut(auth);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const linkWalletAddress = async (walletAddress: string) => {
-    if (!user) throw new Error('User must be logged in to link a wallet.');
-    const userDocRef = doc(db, 'users', user.uid);
-    await updateDoc(userDocRef, {
-      linkedWallet: walletAddress,
+    // Request signature
+    const { signedTxXdr } = await kit.signTransaction(tx.toXDR(), {
+      networkPassphrase: NETWORK_PASSPHRASE,
     });
 
-    // Sync the owner's name to their registered store, if it exists
-    try {
-      const storeDocRef = doc(db, 'stores', walletAddress);
-      const storeSnap = await getDoc(storeDocRef);
-      if (storeSnap.exists()) {
-        await updateDoc(storeDocRef, {
-          ownerName: profile?.fullName || user.email?.split('@')[0] || 'Unknown',
-        });
-      }
-    } catch (err) {
-      console.error('Failed to sync owner name to store document:', err);
+    // Send to Cloud Function
+    const res = await fetch(getFunctionUrl(functionName), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ payload, signedXdr: signedTxXdr }),
+    });
+
+    if (!res.ok) {
+      const errData = await res.json().catch(() => ({}));
+      throw new Error(errData.error || 'Request failed');
     }
+  };
+
+  const signInWithWallet = async () => {
+    setLoading(true);
+    try {
+      const kit = getKit();
+      if (!kit) throw new Error('Wallet kit not initialized');
+
+      // Use authModal which handles module selection and returns address
+      const { address } = await kit.authModal();
+      
+      setUser({ uid: address });
+      localStorage.setItem('activeWallet', address);
+
+      // Check if profile exists
+      const userDocRef = doc(db, 'users', address);
+      const docSnap = await getDoc(userDocRef);
+
+      return { isNew: !docSnap.exists(), publicKey: address };
+    } catch (error) {
+      setLoading(false);
+      throw error;
+    }
+  };
+
+  const createWalletProfile = async (role: 'merchant' | 'customer', fullName: string) => {
+    await sendSecurePayload('secureWriteProfile', 'createProfile', { role, fullName });
+  };
+
+  const updateProfileDetails = async (fullName: string) => {
+    await sendSecurePayload('secureWriteProfile', 'updateProfile', { fullName });
+  };
+
+  const deleteUserAccount = async () => {
+    await sendSecurePayload('secureDeleteAccount', 'deleteAccount');
+    logOut();
   };
 
   return (
@@ -149,10 +207,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         user,
         profile,
         loading,
-        signIn,
-        signUp,
+        signInWithWallet,
+        createWalletProfile,
+        updateProfileDetails,
+        deleteUserAccount,
         logOut,
-        linkWalletAddress,
       }}
     >
       {children}

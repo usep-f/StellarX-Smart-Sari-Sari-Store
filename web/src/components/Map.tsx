@@ -92,18 +92,28 @@ export default function Map({
         mapRef.current.remove();
         mapRef.current = null;
       }
+      markersRef.current = null;
+      userMarkerRef.current = null;
+      selectedMarkerRef.current = null;
     };
   }, [onMapClick, userLocation]);
 
   // Update center when user location is loaded
   useEffect(() => {
+    let timer: NodeJS.Timeout;
     if (mapRef.current && userLocation) {
       mapRef.current.setView(userLocation, 14);
       // Recalculate layout once view changes to ensure all tiles are fetched
-      setTimeout(() => {
-        mapRef.current?.invalidateSize();
+      timer = setTimeout(() => {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        if (mapRef.current && (mapRef.current as any)._container) {
+          mapRef.current.invalidateSize();
+        }
       }, 100);
     }
+    return () => {
+      if (timer) clearTimeout(timer);
+    };
   }, [userLocation]);
 
   // Render Stores and Geolocation Markers

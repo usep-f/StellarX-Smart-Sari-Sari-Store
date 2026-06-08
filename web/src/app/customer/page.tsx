@@ -15,6 +15,7 @@ function CheckoutContent() {
   const merchantAddress = searchParams.get('to') || '';
   const amountStr = searchParams.get('amount') || '';
   const memo = searchParams.get('memo') || '';
+  const currency = searchParams.get('currency') || 'XLM';
   
   const amount = parseFloat(amountStr);
   const isValidParams = merchantAddress && !isNaN(amount) && amount > 0 && memo;
@@ -66,6 +67,7 @@ function CheckoutContent() {
           merchantAddress={merchantAddress} 
           amount={amount} 
           memo={memo} 
+          currency={currency}
         />
       ) : (
         // Render QR Scanner when no active checkout parameters exist
@@ -89,12 +91,12 @@ function CheckoutContent() {
             // Let them simulate scanning an invoice to a mock merchant address
             manualOptions={[
               {
-                value: `http://localhost:3000/customer?to=GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5&amount=8.50&memo=sari-12345`,
-                label: 'Simulate invoice: 8.50 XLM (Ate Nena)',
+                value: `http://localhost:3000/customer?to=GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5&amount=85.00&memo=sari-12345&currency=PHP`,
+                label: 'Simulate invoice: ₱85.00 PHP (Ate Nena)',
               },
               {
-                value: `http://localhost:3000/customer?to=GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5&amount=12.00&memo=sari-67890`,
-                label: 'Simulate invoice: 12.00 XLM (Tindahan Ni Juan)',
+                value: `http://localhost:3000/customer?to=GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5&amount=120.00&memo=sari-67890&currency=PHP`,
+                label: 'Simulate invoice: ₱120.00 PHP (Tindahan Ni Juan)',
               },
             ]}
           />

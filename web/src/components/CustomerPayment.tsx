@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useWallet } from '@/hooks/useWallet';
 import { useAuth } from '@/context/AuthContext';
+import { useXlmPrice } from '@/hooks/useXlmPrice';
 import { db } from '@/lib/firebase';
 import { 
   collection, 
@@ -28,6 +29,7 @@ interface CustomerPaymentProps {
   merchantAddress: string;
   amount: number;
   memo: string;
+  currency?: string; // 'XLM' or 'PHP'
 }
 
 interface PurchaseReceipt {
@@ -35,6 +37,7 @@ interface PurchaseReceipt {
   timestamp: number;
   merchant: string;
   amount: number;
+  amountPhp?: number;
   memo: string;
   txHash: string;
 }
@@ -43,15 +46,22 @@ export default function CustomerPayment({
   merchantAddress,
   amount,
   memo,
+  currency = 'XLM',
 }: CustomerPaymentProps) {
   const wallet = useWallet();
   const { publicKey, connect, connecting, error: walletError } = wallet;
   const { user } = useAuth();
   const { error: showToastError } = useToast();
+  const { rate: xlmRate, loading: loadingRate, error: rateError, refetch: refetchRate } = useXlmPrice();
 
   const [balances, setBalances] = useState<Balances | null>(null);
   const [loadingBalance, setLoadingBalance] = useState(false);
   const [funding, setFunding] = useState(false);
+
+  // Conversion calculations
+  const isPhp = currency === 'PHP';
+  const displayAmountPhp = isPhp ? amount : amount * xlmRate;
+  const targetXlmAmount = isPhp ? amount / xlmRate : amount;
   
   // Payment execution state
   const [paymentStatus, setPaymentStatus] = useState<'idle' | 'paying' | 'success' | 'failed'>('idle');
@@ -136,6 +146,7 @@ export default function CustomerPayment({
             timestamp: data.timestamp,
             merchant: data.merchantAddress,
             amount: data.amount,
+            amountPhp: data.amountPhp || (data.exchangeRate ? data.amount * data.exchangeRate : data.amount * 10),
             memo: data.memo,
             txHash: data.txHash
           });
@@ -178,7 +189,7 @@ export default function CustomerPayment({
     if (!publicKey || !merchantAddress || !amount || !memo || !user) return;
     
     // Check balance
-    if (balances && parseFloat(balances.xlm) < amount) {
+    if (balances && parseFloat(balances.xlm) < targetXlmAmount) {
       setPaymentError('Insufficient XLM balance to complete this transaction.');
       setPaymentStatus('failed');
       return;
@@ -188,17 +199,17 @@ export default function CustomerPayment({
     setPaymentError(null);
 
     try {
-      // 1. Build payment XDR
+      // 1. Build payment XDR using dynamically calculated XLM amount (formatted to 7 decimal places)
       const xdr = await buildPaymentXDR(
         publicKey,
         merchantAddress,
-        amount.toString(),
+        targetXlmAmount.toFixed(7),
         'XLM',
         memo
       );
 
       // 2. Sign, submit, and poll using Freighter
-      const hash = await signAndSubmit(xdr, publicKey);
+      const hash = await signAndSubmit(xdr);
       setTxHash(hash);
       setPaymentStatus('success');
 
@@ -207,7 +218,9 @@ export default function CustomerPayment({
         uid: user.uid,
         customerAddress: publicKey,
         merchantAddress: merchantAddress,
-        amount,
+        amount: targetXlmAmount, // XLM paid
+        amountPhp: displayAmountPhp, // PHP total
+        exchangeRate: xlmRate, // Exchange rate
         memo,
         txHash: hash,
         timestamp: Date.now()
@@ -234,6 +247,23 @@ export default function CustomerPayment({
             <p className="text-xs text-gray-400 mt-1">Review the transaction before signing with Freighter.</p>
           </div>
 
+          {/* Live Rate Widget for Customer */}
+          <div className="flex items-center justify-between bg-white/5 border border-white/5 px-4 py-2 rounded-xl text-xs">
+            <div className="flex items-center gap-2">
+              <span className={`w-1.5 h-1.5 rounded-full ${rateError ? 'bg-red-500' : 'bg-[#00c853] animate-pulse'}`} />
+              <span className="text-gray-400">
+                {rateError ? 'Exchange rate offline' : `Coinbase Rate: 1 XLM = ₱${xlmRate.toFixed(2)} PHP`}
+              </span>
+            </div>
+            <button 
+              onClick={refetchRate}
+              disabled={loadingRate}
+              className="text-[#ff7a00] hover:underline cursor-pointer disabled:text-gray-600 text-xs font-semibold"
+            >
+              {loadingRate ? 'Syncing...' : 'Sync'}
+            </button>
+          </div>
+
           {/* Checkout Card */}
           <div className="bg-[#161c24]/80 rounded-2xl p-5 border border-white/5 flex flex-col gap-4">
             <div className="flex justify-between items-start">
@@ -249,11 +279,17 @@ export default function CustomerPayment({
               </div>
             </div>
 
-            <div className="border-t border-white/5 pt-4 flex justify-between items-center">
-              <span className="text-sm text-gray-300 font-semibold">Total Amount</span>
-              <span className="text-2xl font-bold font-mono text-[#00c853] flex items-baseline gap-1">
-                {amount.toFixed(2)} <span className="text-xs text-[#ffc700] font-sans font-normal">XLM</span>
-              </span>
+            <div className="border-t border-white/5 pt-4 flex flex-col gap-2">
+              <div className="flex justify-between items-center text-xs text-gray-400">
+                <span>Total PHP Amount</span>
+                <span className="font-mono text-white">₱{displayAmountPhp.toFixed(2)} PHP</span>
+              </div>
+              <div className="flex justify-between items-center border-t border-white/5 pt-2">
+                <span className="text-sm text-gray-300 font-semibold">Total XLM to Pay</span>
+                <span className="text-xl font-bold font-mono text-[#00c853] flex items-baseline gap-1">
+                  {targetXlmAmount.toFixed(4)} <span className="text-xs text-[#ffc700] font-sans font-normal">XLM</span>
+                </span>
+              </div>
             </div>
           </div>
 
@@ -335,7 +371,7 @@ export default function CustomerPayment({
               {/* Action Buttons */}
               <button
                 onClick={handlePay}
-                disabled={!!(balances && parseFloat(balances.xlm) < amount)}
+                disabled={!!(balances && parseFloat(balances.xlm) < targetXlmAmount)}
                 className="w-full bg-[#00c853] hover:bg-[#00b04a] disabled:bg-gray-800 disabled:text-gray-500 disabled:border-transparent text-white font-bold py-3.5 px-4 rounded-xl shadow-lg shadow-[#00c853]/20 transition flex items-center justify-center gap-2 group border border-[#00c853]/30"
               >
                 Confirm & Pay Invoice <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition" />
@@ -365,7 +401,7 @@ export default function CustomerPayment({
 
           <div>
             <h3 className="font-bold text-xl text-white">Payment Successful!</h3>
-            <p className="text-xs text-gray-400 mt-1">Your payment of {amount.toFixed(2)} XLM has been settled.</p>
+            <p className="text-xs text-gray-400 mt-1">Your payment of ₱{displayAmountPhp.toFixed(2)} PHP ({targetXlmAmount.toFixed(4)} XLM) has been settled.</p>
           </div>
 
           <div className="w-full border-t border-b border-dashed border-white/10 py-4 flex flex-col gap-2.5 text-left text-xs text-gray-400">
@@ -438,8 +474,15 @@ export default function CustomerPayment({
                   <span className="text-[10px] text-gray-500 block">Store: {p.merchant.slice(0, 6)}...{p.merchant.slice(-6)}</span>
                 </div>
                 <div className="text-right">
-                  <span className="font-mono text-xs font-bold text-red-400">-{p.amount.toFixed(2)} XLM</span>
-                  <span className="text-[9px] text-gray-500 block">{new Date(p.timestamp).toLocaleDateString()}</span>
+                  <span className="font-mono text-xs font-bold text-red-400">
+                    {p.amountPhp ? `-₱${p.amountPhp.toFixed(2)}` : `-${p.amount.toFixed(2)} XLM`}
+                  </span>
+                  {p.amountPhp && (
+                    <span className="text-[9px] text-gray-500 block mt-0.5 font-mono">
+                      -{p.amount.toFixed(2)} XLM
+                    </span>
+                  )}
+                  <span className="text-[9px] text-gray-500 block mt-0.5">{new Date(p.timestamp).toLocaleDateString()}</span>
                 </div>
               </div>
             ))}

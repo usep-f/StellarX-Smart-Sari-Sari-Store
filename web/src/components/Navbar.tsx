@@ -64,9 +64,13 @@ export default function Navbar() {
   };
 
   const getUserInitials = () => {
-    const email = profile?.email || user?.email;
-    if (!email) return 'U';
-    return email.substring(0, 2).toUpperCase();
+    if (profile?.fullName) {
+      return profile.fullName.substring(0, 2).toUpperCase();
+    }
+    if (user?.uid) {
+      return user.uid.substring(0, 2).toUpperCase();
+    }
+    return 'U';
   };
 
   return (
@@ -107,7 +111,7 @@ export default function Navbar() {
           <div className="hidden md:flex items-center gap-3">
             {loading && !user ? (
               <div className="w-24 h-9 rounded-xl bg-white/5 border border-white/10 animate-pulse" />
-            ) : user ? (
+            ) : (user && profile) ? (
               <div className="relative">
                 {/* Profile Avatar trigger */}
                 <button
@@ -119,7 +123,7 @@ export default function Navbar() {
                   </div>
                   <div className="flex flex-col pr-1">
                     <span className="text-[10px] text-gray-400 font-bold max-w-[100px] truncate leading-tight">
-                      {profile?.email || user?.email}
+                      {profile?.fullName || (user?.uid ? `${user.uid.slice(0, 6)}...${user.uid.slice(-6)}` : 'Loading...')}
                     </span>
                     <span className="text-[8px] text-[#00f0ff] uppercase tracking-widest font-extrabold leading-none mt-0.5">
                       {loading ? 'Loading...' : (profile?.role === 'merchant' ? 'Store Owner' : 'Customer')}
@@ -141,8 +145,10 @@ export default function Navbar() {
                         className="absolute right-0 mt-2 w-56 rounded-2xl glass border-white/5 p-2 shadow-2xl z-20 flex flex-col gap-1"
                       >
                         <div className="px-3 py-2 border-b border-white/5 mb-1 text-left">
-                          <p className="text-[10px] text-gray-500 font-bold uppercase tracking-wider">Account</p>
-                          <p className="text-xs text-white truncate font-medium mt-0.5">{profile?.email}</p>
+                          <p className="text-[10px] text-gray-500 font-bold uppercase tracking-wider">Stellar Address</p>
+                          <p className="text-xs text-white truncate font-medium mt-0.5 font-mono">
+                            {user?.uid ? `${user.uid.slice(0, 8)}...${user.uid.slice(-8)}` : ''}
+                          </p>
                         </div>
                         
                         <Link
@@ -152,6 +158,15 @@ export default function Navbar() {
                         >
                           <LayoutDashboard className="w-4 h-4 text-[#ff7a00]" />
                           My Dashboard
+                        </Link>
+
+                        <Link
+                          href="/profile"
+                          className="flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-semibold text-gray-300 hover:text-white hover:bg-white/5 transition duration-150"
+                          onClick={() => setDropdownOpen(false)}
+                        >
+                          <UserIcon className="w-4 h-4 text-[#00f0ff]" />
+                          Profile Settings
                         </Link>
 
                         <button
@@ -216,14 +231,16 @@ export default function Navbar() {
             <div className="border-t border-white/5 pt-4 flex flex-col gap-2">
               {loading && !user ? (
                 <div className="w-full h-12 rounded-xl bg-white/5 border border-white/10 animate-pulse" />
-              ) : user ? (
+              ) : (user && profile) ? (
                 <>
                   <div className="flex items-center gap-2 px-1 mb-2">
                     <div className="w-8 h-8 rounded-lg bg-linear-to-tr from-[#ff7a00]/20 to-[#00f0ff]/20 border border-[#ff7a00]/30 flex items-center justify-center text-xs font-extrabold text-white">
                       {getUserInitials()}
                     </div>
                     <div className="flex flex-col min-w-0">
-                      <span className="text-xs text-white truncate font-medium leading-tight">{profile?.email || user?.email}</span>
+                      <span className="text-xs text-white truncate font-medium leading-tight">
+                        {profile?.fullName || (user?.uid ? `${user.uid.slice(0, 6)}...${user.uid.slice(-6)}` : 'Loading...')}
+                      </span>
                       <span className="text-[8px] text-[#00f0ff] uppercase tracking-widest font-extrabold leading-none mt-0.5">
                         {loading ? 'Loading...' : (profile?.role === 'merchant' ? 'Store Owner' : 'Customer')}
                       </span>
@@ -237,6 +254,15 @@ export default function Navbar() {
                   >
                     <LayoutDashboard className="w-4 h-4" />
                     Open Dashboard
+                  </Link>
+
+                  <Link
+                    href="/profile"
+                    className="flex items-center justify-center gap-1.5 bg-white/5 hover:bg-white/10 text-white font-bold text-xs py-3 px-4 rounded-xl border border-white/10 transition"
+                    onClick={() => setMobileMenuOpen(false)}
+                  >
+                    <UserIcon className="w-4 h-4 text-[#00f0ff]" />
+                    Profile Settings
                   </Link>
 
                   <button

@@ -3,8 +3,18 @@ import { onRequest } from 'firebase-functions/v2/https';
 import { setGlobalOptions } from 'firebase-functions/v2';
 import { initializeApp } from 'firebase-admin/app';
 import { getFirestore, FieldValue } from 'firebase-admin/firestore';
-import { getAuth } from 'firebase-admin/auth';
-import { rpc, scValToNative } from '@stellar/stellar-sdk';
+import { rpc, scValToNative, TransactionBuilder, Transaction, Keypair } from '@stellar/stellar-sdk';
+import { createHash } from 'crypto';
+
+interface AuthPayload {
+  walletAddress: string;
+  timestamp: number;
+  action: string;
+  data?: {
+    role?: 'merchant' | 'customer';
+    fullName?: string;
+  };
+}
 
 initializeApp();
 const db = getFirestore();
@@ -14,7 +24,7 @@ setGlobalOptions({ region: 'asia-southeast1' });
 
 // In a real production setup, load this from config or environment variables
 const RPC_URL = 'https://soroban-testnet.stellar.org';
-const REGISTRY_CONTRACT_ID = process.env.REGISTRY_CONTRACT_ID || 'CDN5MATSIOYZPAUNGKLORF6LVHJKTFGG4LBPC2BKNFBEQ2CLNH2G3LRX';
+const REGISTRY_CONTRACT_ID = process.env.REGISTRY_CONTRACT_ID || 'CDFDBCIKFPE7QCH6RQG5IXB4UWGLPF7U2W2YKIHYJQZLWSXQ7T74BJCJ';
 const INITIAL_LEDGER = 4321000;
 
 const server = new rpc.Server(RPC_URL);
@@ -74,6 +84,7 @@ async function performStoreSync(): Promise<void> {
       const eventName = scValToNative(topics[0]);
       
       if (eventName === 'StoreRegistered') {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const data = scValToNative(ev.value) as any;
         if (!data) continue;
         
@@ -111,6 +122,7 @@ async function performStoreSync(): Promise<void> {
         console.log(`Synced store: ${name} (${owner}) with ownerName: ${ownerName}`);
         
       } else if (eventName === 'StoreDeregistered') {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const data = scValToNative(ev.value) as any;
         if (!data) continue;
         
@@ -154,7 +166,7 @@ async function performStoreSync(): Promise<void> {
   console.log(`Sync complete up to ledger ${latestLedger}`);
 }
 
-export const syncStores = onSchedule('every 1 minutes', async (event) => {
+export const syncStores = onSchedule('every 1 minutes', async () => {
   try {
     await performStoreSync();
   } catch (error) {
@@ -173,28 +185,193 @@ export const syncStoreOnDemand = onRequest(async (req, res) => {
   }
 
   try {
-    // Authenticate the user calling the endpoint
-    const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      res.status(401).json({ error: 'Unauthorized: Missing or invalid Authorization header' });
-      return;
-    }
-
-    const token = authHeader.split('Bearer ')[1];
-    try {
-      await getAuth().verifyIdToken(token);
-    } catch (authError) {
-      console.error('Auth token verification failed:', authError);
-      res.status(401).json({ error: 'Unauthorized: Invalid ID token' });
-      return;
-    }
-
     // Trigger sync
     await performStoreSync();
     
     res.status(200).json({ success: true, message: 'Sync complete' });
   } catch (error) {
     console.error('Error during on-demand store sync:', error);
+    res.status(500).json({ error: 'Internal Server Error' });
+  }
+});
+
+/**
+ * Helper to verify a signed payload using Stellar transaction memo hash
+ */
+function verifyPayloadSignature(payload: AuthPayload, signedXdr: string): boolean {
+  try {
+    const payloadStr = JSON.stringify(payload);
+    const hash = createHash('sha256').update(payloadStr).digest();
+
+    const tx = TransactionBuilder.fromXDR(signedXdr, 'Test SDF Network ; September 2015') as Transaction;
+    
+    // Check timestamp to prevent old replay attacks (5 minute window)
+    if (!payload.timestamp || Date.now() - payload.timestamp > 5 * 60 * 1000) {
+      console.error('Payload timestamp expired or missing');
+      return false;
+    }
+
+    // Verify memo matches payload hash
+    if (tx.memo.type !== 'hash') {
+      console.error('Memo type is not hash');
+      return false;
+    }
+    
+    const txMemoHash = tx.memo.value as Buffer;
+    if (!txMemoHash.equals(hash)) {
+      console.error('Memo hash does not match payload hash');
+      return false;
+    }
+
+    // Verify signature
+    const walletAddress = payload.walletAddress;
+    const keypair = Keypair.fromPublicKey(walletAddress);
+    let verified = false;
+    for (const sig of tx.signatures) {
+      if (keypair.verify(tx.hash(), sig.signature())) {
+        verified = true;
+        break;
+      }
+    }
+
+    return verified;
+  } catch (err) {
+    console.error('Signature verification error:', err);
+    return false;
+  }
+}
+
+/**
+ * Endpoint to securely write a user profile without Firebase Auth
+ */
+export const secureWriteProfile = onRequest(async (req, res) => {
+  res.set('Access-Control-Allow-Origin', '*');
+  if (req.method === 'OPTIONS') {
+    res.set('Access-Control-Allow-Methods', 'POST, OPTIONS');
+    res.set('Access-Control-Allow-Headers', 'Content-Type');
+    res.status(204).send('');
+    return;
+  }
+
+  try {
+    const { payload, signedXdr } = req.body;
+    if (!payload || !signedXdr) {
+      res.status(400).json({ error: 'Missing payload or signedXdr' });
+      return;
+    }
+
+    if (!verifyPayloadSignature(payload, signedXdr)) {
+      res.status(401).json({ error: 'Invalid signature or expired payload' });
+      return;
+    }
+
+    const { walletAddress, action, data } = payload;
+    
+    if (action !== 'createProfile' && action !== 'updateProfile') {
+      res.status(400).json({ error: 'Invalid action' });
+      return;
+    }
+
+    const userDocRef = db.doc(`users/${walletAddress}`);
+    
+    if (action === 'createProfile') {
+      const userProfile = {
+        email: null,
+        role: data.role,
+        fullName: data.fullName,
+        linkedWallet: walletAddress,
+        createdAt: Date.now(),
+      };
+      await userDocRef.set(userProfile);
+    } else if (action === 'updateProfile') {
+      await userDocRef.update({ fullName: data.fullName });
+      
+      // If merchant, sync ownerName to store
+      const userSnap = await userDocRef.get();
+      if (userSnap.exists && userSnap.data()?.role === 'merchant') {
+        const storeDocRef = db.doc(`stores/${walletAddress}`);
+        const storeSnap = await storeDocRef.get();
+        if (storeSnap.exists) {
+          await storeDocRef.update({ ownerName: data.fullName });
+        }
+      }
+    }
+
+    res.status(200).json({ success: true });
+  } catch (error) {
+    console.error('Error in secureWriteProfile:', error);
+    res.status(500).json({ error: 'Internal Server Error' });
+  }
+});
+
+/**
+ * Endpoint to securely delete a user account without Firebase Auth
+ */
+export const secureDeleteAccount = onRequest(async (req, res) => {
+  res.set('Access-Control-Allow-Origin', '*');
+  if (req.method === 'OPTIONS') {
+    res.set('Access-Control-Allow-Methods', 'POST, OPTIONS');
+    res.set('Access-Control-Allow-Headers', 'Content-Type');
+    res.status(204).send('');
+    return;
+  }
+
+  try {
+    const { payload, signedXdr } = req.body;
+    if (!payload || !signedXdr) {
+      res.status(400).json({ error: 'Missing payload or signedXdr' });
+      return;
+    }
+
+    if (!verifyPayloadSignature(payload, signedXdr)) {
+      res.status(401).json({ error: 'Invalid signature or expired payload' });
+      return;
+    }
+
+    const { walletAddress, action } = payload;
+    if (action !== 'deleteAccount') {
+      res.status(400).json({ error: 'Invalid action' });
+      return;
+    }
+
+    const userDocRef = db.doc(`users/${walletAddress}`);
+    const userSnap = await userDocRef.get();
+    
+    if (!userSnap.exists) {
+      res.status(404).json({ error: 'User not found' });
+      return;
+    }
+    
+    const profile = userSnap.data();
+
+    // 1. Cascade delete
+    if (profile?.role === 'customer') {
+      const purchasesSnap = await db.collection('purchases').where('uid', '==', walletAddress).get();
+      const batch = db.batch();
+      purchasesSnap.docs.forEach(d => batch.delete(d.ref));
+      await batch.commit();
+    }
+
+    if (profile?.role === 'merchant') {
+      await db.recursiveDelete(db.doc(`stores/${walletAddress}`));
+      
+      const legacyProductsSnap = await db.collection('products').where('uid', '==', walletAddress).get();
+      const batch1 = db.batch();
+      legacyProductsSnap.docs.forEach(d => batch1.delete(d.ref));
+      await batch1.commit();
+
+      const legacyReceiptsSnap = await db.collection('receipts').where('uid', '==', walletAddress).get();
+      const batch2 = db.batch();
+      legacyReceiptsSnap.docs.forEach(d => batch2.delete(d.ref));
+      await batch2.commit();
+    }
+
+    // 2. Delete user profile
+    await userDocRef.delete();
+
+    res.status(200).json({ success: true });
+  } catch (error) {
+    console.error('Error in secureDeleteAccount:', error);
     res.status(500).json({ error: 'Internal Server Error' });
   }
 });

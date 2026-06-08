@@ -20,7 +20,7 @@ export default function AddTrustline({
     setError('');
     try {
       const xdr = await buildAddUsdcTrustlineXDR(publicKey);
-      await signAndSubmit(xdr, publicKey);
+      await signAndSubmit(xdr);
       setStatus('done');
       onDone();
     } catch (e: unknown) {

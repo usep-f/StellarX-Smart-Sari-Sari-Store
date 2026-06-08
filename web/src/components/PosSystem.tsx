@@ -7,6 +7,7 @@ import { HORIZON_URL } from '@/lib/stellar';
 import QRScanner from './QRScanner';
 import { useAuth } from '@/context/AuthContext';
 import { useToast } from '@/components/ui/Toast';
+import { useXlmPrice } from '@/hooks/useXlmPrice';
 import { db } from '@/lib/firebase';
 import { 
   collection, 
@@ -30,7 +31,7 @@ const horizon = new Horizon.Server(HORIZON_URL);
 interface Product {
   id: string;
   name: string;
-  price: number; // in XLM
+  price: number; // in PHP
   category?: string;
 }
 
@@ -53,7 +54,9 @@ interface Receipt {
   id: string;
   timestamp: number;
   items: CartItem[];
-  total: number;
+  total: number; // in PHP
+  totalXlm?: number; // in XLM actually paid
+  exchangeRate?: number; // XLM-PHP rate used
   memo: string;
   txHash: string;
 }
@@ -65,6 +68,7 @@ interface PosSystemProps {
 export default function PosSystem({ ownerAddress }: PosSystemProps) {
   const { user } = useAuth();
   const { warning: showToastWarning, success: showToastSuccess, error: showToastError } = useToast();
+  const { rate: xlmRate, loading: loadingRate, error: rateError, refetch: refetchRate } = useXlmPrice();
   const [activeTab, setActiveTab] = useState<'pos' | 'inventory' | 'history'>('pos');
   const [products, setProducts] = useState<Product[]>([]);
   const [cart, setCart] = useState<CartItem[]>([]);
@@ -190,10 +194,10 @@ export default function PosSystem({ ownerAddress }: PosSystemProps) {
       } else if (!storedProductsStr && !dbHasProducts) {
         // Prepopulate default mock products in Firestore on very first access
         const mockProducts: Product[] = [
-          { id: 'prod_coke', name: 'Coca-Cola 1.5L', price: 5.0, category: 'Beverages' },
-          { id: 'prod_lucky_me', name: 'Lucky Me Instant Noodles', price: 2.0, category: 'Instant Noodles' },
-          { id: 'prod_nagaraya', name: 'Nagaraya Garlic 80g', price: 1.5, category: 'Snacks & Chips' },
-          { id: 'prod_fudgee', name: 'Fudgee Barr Chocolate', price: 1.0, category: 'Candies & Sweets' },
+          { id: 'prod_coke', name: 'Coca-Cola 1.5L', price: 75.0, category: 'Beverages' },
+          { id: 'prod_lucky_me', name: 'Lucky Me Instant Noodles', price: 18.0, category: 'Instant Noodles' },
+          { id: 'prod_nagaraya', name: 'Nagaraya Garlic 80g', price: 22.0, category: 'Snacks & Chips' },
+          { id: 'prod_fudgee', name: 'Fudgee Barr Chocolate', price: 12.0, category: 'Candies & Sweets' },
         ];
         for (const prod of mockProducts) {
           await setDoc(doc(db, 'stores', ownerAddress, 'products', prod.id), {
@@ -259,7 +263,9 @@ export default function PosSystem({ ownerAddress }: PosSystemProps) {
               id: docSnap.id,
               timestamp: data.timestamp,
               items: data.items,
-              total: data.total,
+              total: data.total || data.totalPhp || 0,
+              totalXlm: data.totalXlm || (data.total ? data.total / 10 : 0),
+              exchangeRate: data.exchangeRate || 10,
               memo: data.memo,
               txHash: data.txHash
             });
@@ -435,6 +441,7 @@ export default function PosSystem({ ownerAddress }: PosSystemProps) {
             // Fetch operations for this transaction to verify the amount and recipient
             const opsPage = await tx.operations();
             let hasValidPayment = false;
+            let actualXlmPaid = 0;
 
             for (const op of opsPage.records) {
               const opPayment = op as unknown as {
@@ -450,8 +457,14 @@ export default function PosSystem({ ownerAddress }: PosSystemProps) {
                 opPayment.amount
               ) {
                 const amountPaid = parseFloat(opPayment.amount);
-                // Allow a tiny margin for float representation issues
-                if (Math.abs(amountPaid - activeTotal) < 0.00001) {
+                actualXlmPaid = amountPaid;
+
+                // Dynamic exchange rate verification
+                // Convert received XLM amount to PHP using the current rate
+                const phpValuePaid = amountPaid * xlmRate;
+                
+                // Allow a small delta of +/- 1 PHP to accommodate timing/exchange rate rounding differences
+                if (Math.abs(phpValuePaid - activeTotal) <= 1.0) {
                   hasValidPayment = true;
                   break;
                 }
@@ -460,7 +473,7 @@ export default function PosSystem({ ownerAddress }: PosSystemProps) {
 
             if (!hasValidPayment) {
               console.warn(
-                `Transaction ${tx.hash} matched memo ${activeMemo} but did not contain a valid payment of ${activeTotal} XLM to ${ownerAddress}.`
+                `Transaction ${tx.hash} matched memo ${activeMemo} but did not contain a valid payment corresponding to ₱${activeTotal.toFixed(2)} PHP (paid ${actualXlmPaid} XLM, worth ₱${(actualXlmPaid * xlmRate).toFixed(2)} PHP at current rate of ₱${xlmRate.toFixed(2)}/XLM).`
               );
               continue; // Keep looking at other transactions
             }
@@ -473,7 +486,9 @@ export default function PosSystem({ ownerAddress }: PosSystemProps) {
             await addDoc(collection(db, 'stores', ownerAddress, 'receipts'), {
               timestamp: Date.now(),
               items: cart,
-              total: activeTotal,
+              total: activeTotal, // PHP total
+              totalXlm: actualXlmPaid, // Actual XLM paid
+              exchangeRate: xlmRate, // Exchange rate
               memo: activeMemo,
               txHash: tx.hash,
               uid: user.uid,
@@ -504,7 +519,7 @@ export default function PosSystem({ ownerAddress }: PosSystemProps) {
         pollIntervalRef.current = null;
       }
     };
-  }, [checkoutState, activeMemo, ownerAddress, activeTotal, cart, user]);
+  }, [checkoutState, activeMemo, ownerAddress, activeTotal, cart, user, xlmRate]);
 
   // Simulate payment (bypasses blockchain for quick debugging on testnet if needed)
   const simulatePaymentSuccess = async () => {
@@ -513,11 +528,14 @@ export default function PosSystem({ ownerAddress }: PosSystemProps) {
     setActiveTxHash(mockHash);
     setCheckoutState('paid');
     
+    const xlmPaid = activeTotal / xlmRate;
     try {
       await addDoc(collection(db, 'stores', ownerAddress, 'receipts'), {
         timestamp: Date.now(),
         items: cart,
-        total: activeTotal,
+        total: activeTotal, // PHP total
+        totalXlm: xlmPaid, // Actual XLM paid
+        exchangeRate: xlmRate, // Exchange rate
         memo: activeMemo,
         txHash: mockHash,
         uid: user.uid,
@@ -532,7 +550,7 @@ export default function PosSystem({ ownerAddress }: PosSystemProps) {
   // Final URL that customer scans to open the web app customer checkout page
   const getPaymentUrl = () => {
     if (typeof window === 'undefined') return '';
-    return `${window.location.origin}/customer?to=${ownerAddress}&amount=${activeTotal}&memo=${activeMemo}`;
+    return `${window.location.origin}/customer?to=${ownerAddress}&amount=${activeTotal}&memo=${activeMemo}&currency=PHP`;
   };
 
   const simulateCustomerRedirect = () => {
@@ -541,32 +559,62 @@ export default function PosSystem({ ownerAddress }: PosSystemProps) {
 
   return (
     <div className="w-full flex flex-col gap-6">
-      {/* Navigation tabs */}
-      <div className="flex border-b border-card-border p-1 bg-black/20 rounded-xl max-w-sm glass">
-        <button
-          onClick={() => setActiveTab('pos')}
-          className={`flex-1 py-2 px-3 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 transition ${
-            activeTab === 'pos' ? 'bg-[#ff7a00] text-white shadow-md' : 'text-gray-400 hover:text-white'
-          }`}
-        >
-          <ShoppingCart className="w-4 h-4" /> POS Cart
-        </button>
-        <button
-          onClick={() => setActiveTab('inventory')}
-          className={`flex-1 py-2 px-3 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 transition ${
-            activeTab === 'inventory' ? 'bg-[#ff7a00] text-white shadow-md' : 'text-gray-400 hover:text-white'
-          }`}
-        >
-          <Package className="w-4 h-4" /> Products
-        </button>
-        <button
-          onClick={() => setActiveTab('history')}
-          className={`flex-1 py-2 px-3 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 transition ${
-            activeTab === 'history' ? 'bg-[#ff7a00] text-white shadow-md' : 'text-gray-400 hover:text-white'
-          }`}
-        >
-          <History className="w-4 h-4" /> Sales
-        </button>
+      {/* Tab Navigation & Exchange Rate Status Widget */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        {/* Navigation tabs */}
+        <div className="flex border-b border-card-border p-1 bg-black/20 rounded-xl max-w-sm glass flex-1 sm:flex-initial">
+          <button
+            onClick={() => {
+              setActiveTab('pos');
+              setCurrentPage(0);
+            }}
+            className={`flex-1 py-2 px-3 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 transition ${
+              activeTab === 'pos' ? 'bg-[#ff7a00] text-white shadow-md' : 'text-gray-400 hover:text-white'
+            }`}
+          >
+            <ShoppingCart className="w-4 h-4" /> POS Cart
+          </button>
+          <button
+            onClick={() => {
+              setActiveTab('inventory');
+              setCurrentPage(0);
+            }}
+            className={`flex-1 py-2 px-3 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 transition ${
+              activeTab === 'inventory' ? 'bg-[#ff7a00] text-white shadow-md' : 'text-gray-400 hover:text-white'
+            }`}
+          >
+            <Package className="w-4 h-4" /> Products
+          </button>
+          <button
+            onClick={() => {
+              setActiveTab('history');
+              setHistoryPage(0);
+            }}
+            className={`flex-1 py-2 px-3 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 transition ${
+              activeTab === 'history' ? 'bg-[#ff7a00] text-white shadow-md' : 'text-gray-400 hover:text-white'
+            }`}
+          >
+            <History className="w-4 h-4" /> Sales
+          </button>
+        </div>
+
+        {/* Live Coinbase Rate Widget */}
+        <div className="flex items-center gap-3 bg-[#161c24]/80 border border-white/5 px-4 py-2 rounded-xl glass shrink-0 self-start sm:self-auto shadow-md">
+          <div className="flex items-center gap-2">
+            <span className={`w-2 h-2 rounded-full ${rateError ? 'bg-red-500 animate-pulse' : 'bg-[#00c853] animate-pulse'}`} />
+            <span className="text-xs font-medium text-gray-300">
+              {rateError ? 'Rate Offline' : `1 XLM = ₱${xlmRate.toFixed(2)} PHP`}
+            </span>
+          </div>
+          <button
+            onClick={refetchRate}
+            disabled={loadingRate}
+            className="text-gray-500 hover:text-white transition p-1 cursor-pointer"
+            title="Force refresh exchange rate"
+          >
+            <RefreshCw className={`w-3 h-3 ${loadingRate ? 'animate-spin' : ''}`} />
+          </button>
+        </div>
       </div>
 
       {loadingData && activeTab !== 'pos' ? (
@@ -609,7 +657,7 @@ export default function PosSystem({ ownerAddress }: PosSystemProps) {
                     >
                       <div>
                         <h4 className="font-semibold text-sm text-white">{item.product.name}</h4>
-                        <p className="text-xs text-gray-400">{item.product.price.toFixed(2)} XLM each</p>
+                        <p className="text-xs text-gray-400">₱{item.product.price.toFixed(2)} each (~{(item.product.price / xlmRate).toFixed(2)} XLM)</p>
                       </div>
                       <div className="flex items-center gap-3">
                         <div className="flex items-center gap-2 border border-white/10 rounded-lg p-1 bg-black/20">
@@ -656,7 +704,7 @@ export default function PosSystem({ ownerAddress }: PosSystemProps) {
                       className="p-2.5 rounded-xl bg-[#161c24] hover:bg-white/5 border border-white/5 text-left transition flex flex-col gap-1 group"
                     >
                       <span className="font-semibold text-xs text-white truncate w-full group-hover:text-[#ff7a00]">{p.name}</span>
-                      <span className="text-[10px] text-[#ffc700] font-bold">{p.price.toFixed(2)} XLM</span>
+                      <span className="text-[10px] text-[#ffc700] font-bold">₱{p.price.toFixed(2)} <span className="text-[9px] text-gray-400 font-normal">({(p.price / xlmRate).toFixed(2)} XLM)</span></span>
                     </button>
                   ))}
                 </div>
@@ -673,7 +721,7 @@ export default function PosSystem({ ownerAddress }: PosSystemProps) {
               manualMode="text"
               manualOptions={products.map((p) => ({
                 value: p.id,
-                label: `${p.name} (${p.price.toFixed(2)} XLM)`,
+                label: `${p.name} (₱${p.price.toFixed(2)} / ${(p.price / xlmRate).toFixed(2)} XLM)`,
                 searchText: p.name,
               }))}
             />
@@ -681,10 +729,18 @@ export default function PosSystem({ ownerAddress }: PosSystemProps) {
             {cart.length > 0 && (
               <div className="mt-4 p-5 rounded-2xl bg-linear-to-br from-[#ff7a00]/10 to-transparent border border-[#ff7a00]/20 flex flex-col gap-4">
                 <div className="flex justify-between items-end">
-                  <span className="text-xs text-gray-400">Grand Total</span>
-                  <span className="text-2xl font-bold text-white font-mono flex items-baseline gap-1">
-                    {getCartTotal().toFixed(2)} <span className="text-xs text-[#ffc700] font-sans">XLM</span>
-                  </span>
+                  <div className="flex flex-col">
+                    <span className="text-xs text-gray-400">Grand Total</span>
+                    <span className="text-2xl font-bold text-white font-mono">
+                      ₱{getCartTotal().toFixed(2)}
+                    </span>
+                  </div>
+                  <div className="text-right">
+                    <span className="text-[10px] text-gray-500 block">Est. Stellar Payment</span>
+                    <span className="text-lg font-bold text-[#ffc700] font-mono">
+                      {(getCartTotal() / xlmRate).toFixed(2)} <span className="text-xs font-sans">XLM</span>
+                    </span>
+                  </div>
                 </div>
                 <button
                   onClick={startCheckout}
@@ -730,9 +786,13 @@ export default function PosSystem({ ownerAddress }: PosSystemProps) {
               <span>Payment Memo</span>
               <span className="font-mono text-[#ffc700] font-bold">{activeMemo}</span>
             </div>
+            <div className="flex justify-between text-xs text-gray-400">
+              <span>Amount Due (PHP)</span>
+              <span className="font-mono text-white">₱{activeTotal.toFixed(2)}</span>
+            </div>
             <div className="border-t border-white/5 my-1 pt-2 flex justify-between text-sm font-bold text-white">
-              <span>Amount Due</span>
-              <span className="font-mono text-[#00c853]">{activeTotal.toFixed(2)} XLM</span>
+              <span>Stellar Amount Due</span>
+              <span className="font-mono text-[#00c853]">{(activeTotal / xlmRate).toFixed(2)} XLM</span>
             </div>
           </div>
 
@@ -808,9 +868,13 @@ export default function PosSystem({ ownerAddress }: PosSystemProps) {
               <span>Reference Memo</span>
               <span className="font-mono text-white">{activeMemo}</span>
             </div>
+            <div className="flex justify-between">
+              <span>Amount Settled (PHP)</span>
+              <span className="font-mono text-white">₱{activeTotal.toFixed(2)}</span>
+            </div>
             <div className="flex justify-between text-sm font-bold text-white mt-1 pt-2 border-t border-white/5">
-              <span>Total Received</span>
-              <span className="font-mono text-[#00c853]">{activeTotal.toFixed(2)} XLM</span>
+              <span>Total XLM Received</span>
+              <span className="font-mono text-[#00c853]">{(activeTotal / xlmRate).toFixed(2)} XLM</span>
             </div>
           </div>
 
@@ -873,16 +937,21 @@ export default function PosSystem({ ownerAddress }: PosSystemProps) {
                   </div>
                   
                   <div className="flex flex-col gap-1">
-                    <label className="text-[11px] text-gray-400 font-medium">Price (XLM)</label>
+                    <label className="text-[11px] text-gray-400 font-medium">Price (PHP)</label>
                     <input
                       type="number"
                       step="0.01"
-                      placeholder="e.g. 2.50"
+                      placeholder="e.g. 50.00"
                       value={newProductPrice}
                       onChange={(e) => setNewProductPrice(e.target.value)}
                       className="bg-[#161c24] border border-card-border rounded-xl p-2.5 text-xs text-white placeholder-gray-600 outline-none focus:border-[#ff7a00] transition"
                       required
                     />
+                    {newProductPrice && !isNaN(parseFloat(newProductPrice)) && (
+                      <span className="text-[10px] text-gray-400 mt-0.5 block pl-1">
+                        Equivalent: <span className="text-[#ffc700] font-mono">{(parseFloat(newProductPrice) / xlmRate).toFixed(2)} XLM</span> (at current rate)
+                      </span>
+                    )}
                   </div>
 
                   <div className="flex flex-col gap-1">
@@ -1003,7 +1072,9 @@ export default function PosSystem({ ownerAddress }: PosSystemProps) {
                                   {p.category || 'Uncategorized'}
                                 </span>
                               </div>
-                              <p className="text-[10px] text-[#ffc700] font-bold mt-1">{p.price.toFixed(2)} XLM</p>
+                              <p className="text-[10px] text-[#ffc700] font-bold mt-1">
+                                ₱{p.price.toFixed(2)} <span className="text-[9px] text-gray-400 font-normal">({(p.price / xlmRate).toFixed(2)} XLM)</span>
+                              </p>
                             </div>
                             <button
                               onClick={() => handleDeleteProduct(p.id)}
@@ -1104,9 +1175,16 @@ export default function PosSystem({ ownerAddress }: PosSystemProps) {
                             <span className="font-semibold text-xs text-white">Invoice {rec.memo}</span>
                             <span className="text-[10px] text-gray-500 block">{new Date(rec.timestamp).toLocaleString()}</span>
                           </div>
-                          <span className="font-mono text-xs font-bold text-[#00c853] bg-[#00c853]/10 border border-[#00c853]/20 px-2.5 py-0.5 rounded-full">
-                            +{rec.total.toFixed(2)} XLM
-                          </span>
+                          <div className="text-right">
+                            <span className="font-mono text-xs font-bold text-[#00c853] bg-[#00c853]/10 border border-[#00c853]/20 px-2.5 py-0.5 rounded-full">
+                              +₱{rec.total.toFixed(2)}
+                            </span>
+                            {rec.totalXlm && (
+                              <span className="text-[9px] text-gray-500 block mt-1 font-mono">
+                                {rec.totalXlm.toFixed(2)} XLM
+                              </span>
+                            )}
+                          </div>
                         </div>
 
                         {/* Items purchased */}
@@ -1116,7 +1194,7 @@ export default function PosSystem({ ownerAddress }: PosSystemProps) {
                               <span>
                                 {item.product.name} <span className="text-gray-500">x{item.quantity}</span>
                               </span>
-                              <span className="font-mono">{(item.product.price * item.quantity).toFixed(2)} XLM</span>
+                              <span className="font-mono">₱{(item.product.price * item.quantity).toFixed(2)}</span>
                             </div>
                           ))}
                         </div>
