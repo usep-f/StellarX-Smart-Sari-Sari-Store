@@ -24,7 +24,7 @@ setGlobalOptions({ region: 'asia-southeast1' });
 
 // In a real production setup, load this from config or environment variables
 const RPC_URL = 'https://soroban-testnet.stellar.org';
-const REGISTRY_CONTRACT_ID = process.env.REGISTRY_CONTRACT_ID || 'CDN5MATSIOYZPAUNGKLORF6LVHJKTFGG4LBPC2BKNFBEQ2CLNH2G3LRX';
+const REGISTRY_CONTRACT_ID = process.env.REGISTRY_CONTRACT_ID || 'CDFDBCIKFPE7QCH6RQG5IXB4UWGLPF7U2W2YKIHYJQZLWSXQ7T74BJCJ';
 const INITIAL_LEDGER = 4321000;
 
 const server = new rpc.Server(RPC_URL);
