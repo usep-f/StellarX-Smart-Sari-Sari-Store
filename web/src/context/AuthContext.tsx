@@ -50,6 +50,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
+  const [sessionRestored, setSessionRestored] = useState(false);
   const pathname = usePathname();
 
   const logOut = async () => {
@@ -76,15 +77,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const timerId = setTimeout(() => {
       if (savedWallet) {
         setUser({ uid: savedWallet });
-      } else {
-        setLoading(false);
       }
+      setSessionRestored(true);
     }, 0);
     return () => clearTimeout(timerId);
   }, []);
 
   // Listen for Firestore profile changes when user is set
   useEffect(() => {
+    if (!sessionRestored) return;
+
     let unsubscribeProfile: (() => void) | undefined;
     let timerId: NodeJS.Timeout | undefined;
 
@@ -116,7 +118,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         clearTimeout(timerId);
       }
     };
-  }, [user]);
+  }, [user, sessionRestored]);
 
   /** Helper to sign a payload and send it to a secure cloud function */
   const sendSecurePayload = async (functionName: string, action: string, data?: Record<string, unknown>) => {
